@@ -70,6 +70,16 @@ func (l *listModel) Typing() bool { return l.typing }
 
 func (l *listModel) Query() string { return l.query }
 
+// SetQuery applies a filter without opening the prompt, so one screen can
+// hand its filter to the next.
+func (l *listModel) SetQuery(q string) {
+	l.query = q
+	l.ti.SetValue(q)
+	l.reindex()
+	l.clampOffset()
+	l.clampCursor()
+}
+
 // Selected returns the absolute index into items, or -1.
 func (l *listModel) Selected() int {
 	if !l.selectableAt(l.cursor) {

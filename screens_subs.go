@@ -19,9 +19,11 @@ type subsLoadedMsg struct {
 type subsScreen struct {
 	baseScreen
 	id     asyncID
-	target streamTarget
+	query  SubsQuery
+	label  string
 	subs   []Subtitle
 	shown  []int
+	active string // url of the track currently loaded, for the marker
 
 	list   listModel
 	busy   busy
@@ -31,13 +33,19 @@ type subsScreen struct {
 	langIx int
 }
 
-func newSubsScreen(t streamTarget) *subsScreen {
+func newSubsScreen(label string, q SubsQuery, shipped []Subtitle) *subsScreen {
 	l := newList()
 	l.Empty = "no subtitles found"
 	l.Numbered = true
 
+	// Whatever came with the stream is already in hand, so it shows before
+	// any request goes out.
+	for i := range shipped {
+		shipped[i].Addon = "stream"
+	}
+
 	return &subsScreen{
-		id: newAsyncID(), target: t, list: l,
+		id: newAsyncID(), query: q, label: label, subs: shipped, list: l,
 		busy: newBusy("looking for subtitles…"),
 	}
 }
@@ -51,19 +59,22 @@ func (s *subsScreen) SetSize(w, h int) {
 }
 
 func (s *subsScreen) Init() tea.Cmd {
-	id, t := s.id, s.target
-	addons := ctx.addons
+	id, q, addons := s.id, s.query, ctx.addons
+	shipped := s.subs
 
 	return tea.Batch(
 		s.busy.start("looking for subtitles…"),
 		func() tea.Msg {
-			return subsLoadedMsg{id: id, subs: GetSubtitles(addons, t.MediaType, t.VideoID)}
+			return subsLoadedMsg{
+				id:   id,
+				subs: MergeSubtitles(shipped, GetSubtitles(addons, q), ctx.cfg.SubtitleLang),
+			}
 		},
 	)
 }
 
 func (s *subsScreen) Footer() string {
-	pairs := [][2]string{{"enter", "turn on"}, {"0-9", "jump"}}
+	pairs := [][2]string{{"enter", "try"}, {"0-9", "jump"}}
 	if len(s.langs) > 2 {
 		pairs = append(pairs, [2]string{"tab", "language"})
 	}
@@ -115,10 +126,15 @@ func (s *subsScreen) rebuild() {
 			continue
 		}
 		s.shown = append(s.shown, i)
+		badge := grey(sub.Addon)
+		if sub.URL == s.active {
+			badge = good("✓ on") + "  " + badge
+		}
+
 		items = append(items, Item{
 			Label: bold(langName(sub.Lang)),
-			Sub:   sub.ID,
-			Badge: grey(sub.Addon),
+			Sub:   sub.Label(),
+			Badge: badge,
 		})
 	}
 	s.list.SetItems(items)
@@ -189,6 +205,18 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.rebuild()
 		return s, nil
 
+	case SubtitleAddedMsg:
+		if m.Err != nil {
+			return s, toastErr("mpv couldn't load that one — try another")
+		}
+		cur := s.list.Selected()
+		s.active = m.URL
+		s.rebuild()
+		if cur >= 0 {
+			s.list.Focus(cur)
+		}
+		return s, toast("subtitles on — " + m.Title)
+
 	case tea.KeyMsg:
 		if consumed, cmd := s.list.Update(msg); consumed {
 			return s, cmd
@@ -202,15 +230,16 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			s.list.ClearNum()
 			sub := s.subs[s.shown[i]]
 
-			// Back to what you were doing: the point of turning subtitles on
-			// is to carry on watching, not to sit on a list of them.
+			// Stays open. The first pick often has the wrong timing, and
+			// closing the list each time meant reopening it from scratch to
+			// try the next one. The ✓ waits for mpv to confirm.
 			return s, tea.Batch(
 				ctx.player.AddSubtitle(sub.URL, langName(sub.Lang), sub.Lang),
-				pop(),
+				toast("loading "+langName(sub.Lang)+" subtitles…"),
 			)
 
 		case "R":
-			cacheSubs.Delete(s.target.MediaType + ":" + s.target.VideoID)
+			cacheSubs.Delete(s.query.MediaType + ":" + s.query.VideoID + ":" + s.query.Hash)
 			s.loaded = false
 			s.id = newAsyncID()
 			return s, s.Init()
@@ -238,13 +267,13 @@ func (s *subsScreen) View() string {
 		return s.busy.view()
 	}
 
-	head := "  " + stSub.Render(s.target.Label) + "\n"
+	head := "  " + stSub.Render(s.label) + "\n"
 	if bar := s.langBar(); bar != "" {
 		head += bar + "\n"
 	}
 	if len(s.subs) == 0 {
 		head += "\n" + stHint.Render(fmt.Sprintf(
-			"  none of your addons returned subtitles for %s", s.target.VideoID))
+			"  none of your addons returned subtitles for %s", s.query.VideoID))
 	}
 	return head + s.list.View()
 }

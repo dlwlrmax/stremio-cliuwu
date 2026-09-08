@@ -274,15 +274,19 @@ func (p *continuePanel) View() string {
 
 		status := stHint.Render("   ·")
 		switch {
+		case c.Airing != "":
+			status = stHint.Render("soon")
 		case c.NextUp:
 			status = stWarn.Render("next")
 		case dur > 0 && pos > 0:
-			status = stSub.Render(fmt.Sprintf("%3.0f%%", pos/dur*100))
+			// Accent, not dim: this is the number you're scanning for. The
+			// rest of the row is context for it.
+			status = accent(fmt.Sprintf("%3.0f%%", pos/dur*100))
 		}
 
 		ep := ""
-		if e.Season > 0 && e.Episode > 0 {
-			ep = fmtVideoID(e.VideoID)
+		if e.Episode > 0 {
+			ep = fmtEp(e.Season, e.Episode, e.VideoID)
 		}
 
 		entry := e
@@ -299,8 +303,8 @@ func (p *continuePanel) View() string {
 				break
 			}
 			ep := ""
-			if e.Season > 0 && e.Episode > 0 {
-				ep = fmtVideoID(e.VideoID)
+			if e.Episode > 0 {
+				ep = fmtEp(e.Season, e.Episode, e.VideoID)
 			}
 			lines = append(lines, p.row("", grey(e.Name), ep, good("   ✓")))
 		}
@@ -320,7 +324,7 @@ func (p *continuePanel) View() string {
 			switch d.State {
 			case DLActive:
 				if d.Total > 0 {
-					status = stSub.Render(fmt.Sprintf("%3.0f%%", d.Frac()*100))
+					status = accent(fmt.Sprintf("%3.0f%%", d.Frac()*100))
 				}
 			case DLQueued:
 				status = stHint.Render("wait")
@@ -395,8 +399,8 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 		return out
 	}
 
-	if e.Season > 0 && e.Episode > 0 {
-		out = append(out, stKey.Render(fmtVideoID(e.VideoID)))
+	if e.Episode > 0 {
+		out = append(out, stKey.Render(fmtEp(e.Season, e.Episode, e.VideoID)))
 	}
 
 	title := e.EpTitle

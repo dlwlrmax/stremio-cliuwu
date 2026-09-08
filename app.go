@@ -309,11 +309,13 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 		// Global on purpose: you realise you want subtitles a minute into an
 		// episode, by which point the stream list is several screens back.
 		if now := ctx.player.Now(); now != nil {
-			return push(newSubsScreen(streamTarget{
+			return push(newSubsScreen(now.Label, SubsQuery{
 				MediaType: now.MediaType,
 				VideoID:   now.VideoID,
-				Label:     now.Label,
-			})), true
+				Hash:      now.VideoHash,
+				Size:      now.VideoSize,
+				Filename:  now.Filename,
+			}, now.Subs)), true
 		}
 	}
 	return nil, false
@@ -335,7 +337,7 @@ func (a *app) advanceTo(prev PlayRequest, prefix string) tea.Cmd {
 	if cur, isStreams := a.top().(*streamScreen); isStreams && cur.target.VideoID == prev.VideoID {
 		return tea.Sequence(
 			toast(prefix+t.Label),
-			replaceTop(newStreamScreen(t)),
+			replaceTop(newStreamScreenFiltered(t, cur.list.Query())),
 		)
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -143,6 +144,18 @@ type Manifest struct {
 	Types       []string       `json:"types"`
 	Resources   []any          `json:"resources"`
 	Catalogs    []AddonCatalog `json:"catalogs"`
+
+	BehaviorHints struct {
+		// The addon says it can't work until you've been through its
+		// configure page. Worth showing: an unconfigured addon answers
+		// every request with nothing, which looks like a broken addon.
+		ConfigurationRequired bool `json:"configurationRequired"`
+
+		// Serves peer-to-peer sources directly, so playing one exposes your
+		// address to the swarm. Not a problem through a debrid service, very
+		// much one without.
+		P2P bool `json:"p2p"`
+	} `json:"behaviorHints"`
 }
 
 // Addon is a fetched, live addon: its manifest URL plus the parsed manifest.
@@ -309,10 +322,71 @@ type Video struct {
 	Title    string `json:"title"`
 	Released string `json:"released"`
 	Overview string `json:"overview"`
+
+	// Addons disagree on these. Kitsu sends title/overview; Cinemeta and the
+	// imdb-keyed metas send name/description, leaving the other pair null —
+	// which is why regrouped anime and Cinemeta specials came out as bare
+	// episode numbers. Both are read, then folded into Title and Overview.
+	Name        string `json:"name"`
+	Description string `json:"description"`
+
+	// Set when the series was fetched by its imdb id: the anime addon
+	// answers with real seasons but keeps a kitsu reference on every episode.
+	KitsuID      string `json:"kitsu_id"`
+	KitsuEpisode int    `json:"kitsuEpisode"`
+}
+
+// fill copies whichever spelling the addon used into the canonical fields.
+func (v Video) fill() Video {
+	if v.Title == "" {
+		v.Title = v.Name
+	}
+	if v.Overview == "" {
+		v.Overview = v.Description
+	}
+	return v
+}
+
+// StreamID is what stream addons should be asked for.
+//
+// Deliberately not always v.ID. Browsing an anime by its imdb id gives proper
+// seasons, but torrentio matches anime far better on kitsu ids — that's why
+// the kitsu addon exists. Since every episode carries both, we can browse one
+// way and request the other, and give up nothing.
+func (v Video) StreamID() string {
+	if v.KitsuID != "" && v.KitsuEpisode > 0 {
+		return fmt.Sprintf("kitsu:%s:%d", v.KitsuID, v.KitsuEpisode)
+	}
+	return v.ID
 }
 
 type SeriesMeta struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Poster string  `json:"poster"`
+	Year   string  `json:"releaseInfo"`
+	ImdbID string  `json:"imdb_id"`
 	Videos []Video `json:"videos"`
+}
+
+// SeasonOf finds which season a kitsu entry became once the series was
+// regrouped, and whether it's there at all.
+//
+// The second return matters: an OVA or a specials collection carries the same
+// imdb id as the show it belongs to, but isn't among its episodes. Regrouping
+// those would swap their content for the main series and leave nothing to
+// play — so a miss means don't regroup. Season 0 is a real answer, which is
+// why this can't just report zero for absent.
+func (sm SeriesMeta) SeasonOf(kitsuID string) (int, bool) {
+	if kitsuID == "" {
+		return 0, false
+	}
+	for _, v := range sm.Videos {
+		if v.KitsuID == kitsuID {
+			return v.Season, true
+		}
+	}
+	return 0, false
 }
 
 type Stream struct {
@@ -320,6 +394,28 @@ type Stream struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
+
+	// Subtitles the addon ships with the stream itself, distinct from what
+	// the subtitle addons return for the title.
+	Subtitles []Subtitle `json:"subtitles"`
+
+	// Some addons say outright whether a result is cached rather than
+	// leaving it to be read out of the display text. A pointer so "absent"
+	// stays distinct from "explicitly false".
+	Cached *bool `json:"cached"`
+
+	// Documented in the addon spec, and better than anything we can parse
+	// out of the display text — the addon already knows these exactly.
+	//
+	// VideoHash is the OpenSubtitles hash and, with VideoSize, is what the
+	// spec says to pass to subtitle addons so they can match the actual
+	// file rather than just the title. Without it, subtitles are matched on
+	// the video id alone and you get every release's timing.
+	BehaviorHints struct {
+		Filename  string `json:"filename"`
+		VideoSize int64  `json:"videoSize"`
+		VideoHash string `json:"videoHash"`
+	} `json:"behaviorHints"`
 
 	Addon string // injected
 	Rank  int    // injected: the addon's position in your list
@@ -413,13 +509,17 @@ func (q *EpQueue) SeasonEpisodes(season int) []Video {
 // configVersion is bumped whenever a new field needs a non-zero default.
 // Without this, adding a bool to the struct silently gives every existing
 // install `false`, because encoding/json just leaves absent fields alone.
-const configVersion = 11
+const configVersion = 12
 
 type AppConfig struct {
 	Version          int    `json:"version"`
 	MpvPath          string `json:"mpv_path"`
 	PreferredQuality string `json:"preferred_quality"`
 	SubtitleLang     string `json:"subtitle_lang"`
+
+	// Terms that hide a stream from the picker. Substring, case-insensitive,
+	// matched against everything the addon says about it.
+	Blocked []string `json:"blocked,omitempty"`
 	HistoryMax       int    `json:"history_max"`
 	OmdbKey          string `json:"omdb_key"`
 	AutoNext         bool   `json:"auto_next"`

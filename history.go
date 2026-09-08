@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,7 @@ type recentEntry struct {
 	NextSeason  int    `json:"ns,omitempty"`
 	NextEpisode int    `json:"ne,omitempty"`
 	NextTitle   string `json:"nt,omitempty"`
+	NextRelease string `json:"nr,omitempty"`
 }
 
 type historyFile struct {
@@ -394,6 +396,7 @@ func (h *historyStore) pushRecent(e HistoryEntry, now int64) {
 		VideoID: e.VideoID, EpTitle: e.EpTitle, Total: e.EpisodeTotal, At: now,
 		NextVideoID: e.NextVideoID, NextSeason: e.NextSeason,
 		NextEpisode: e.NextEpisode, NextTitle: e.NextTitle,
+		NextRelease: e.NextReleased,
 	}}, out...)
 
 	h.trimRecent()
@@ -557,6 +560,7 @@ func (h *historyStore) recentEntries() HistoryList {
 			EpisodeTotal: r.Total, WatchedAt: time.Unix(r.At, 0),
 			NextVideoID:  r.NextVideoID, NextSeason: r.NextSeason,
 			NextEpisode:  r.NextEpisode, NextTitle: r.NextTitle,
+			NextReleased: r.NextRelease,
 		}
 		if st := sh.Eps[epKey(r.Season, r.Episode)]; st != nil {
 			e.Position, e.Duration, e.Watched = st.P, st.D, st.W
@@ -566,6 +570,90 @@ func (h *historyStore) recentEntries() HistoryList {
 	return out
 }
 
+// ShowSummary is one title in history, however many of its episodes you've
+// watched.
+type ShowSummary struct {
+	ID       string
+	Name     string
+	Type     string
+	Source   string
+	Year     string
+	Episodes int   // watched or part-watched
+	SeenAt   int64 // most recent activity
+}
+
+// HistoryShows groups history by title, most recently watched first.
+//
+// The episode list answers "what did I watch", which is the right view most
+// of the time. It's the wrong one for clearing out a show you've finished —
+// that means deleting thirty rows one at a time.
+func HistoryShows() []ShowSummary {
+	hist.mu.Lock()
+	defer hist.mu.Unlock()
+	hist.load()
+
+	out := make([]ShowSummary, 0, len(hist.data.Shows))
+	for id, sh := range hist.data.Shows {
+		n := 0
+		for _, e := range sh.Eps {
+			if e.W || e.P > 0 {
+				n++
+			}
+		}
+		if n == 0 {
+			continue
+		}
+		out = append(out, ShowSummary{
+			ID: id, Name: sh.Name, Type: sh.Type, Source: sh.Source,
+			Year: sh.Year, Episodes: n, SeenAt: sh.SeenAt,
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SeenAt != out[j].SeenAt {
+			return out[i].SeenAt > out[j].SeenAt
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// ClearShow removes a title and everything under it.
+func ClearShow(id string) {
+	hist.mu.Lock()
+	defer hist.mu.Unlock()
+	hist.load()
+
+	delete(hist.data.Shows, id)
+
+	kept := hist.data.Recent[:0]
+	for _, r := range hist.data.Recent {
+		if r.ShowID != id {
+			kept = append(kept, r)
+		}
+	}
+	hist.data.Recent = kept
+
+	hist.reindex()
+	hist.touch()
+}
+
+// showInRecent reports whether any history row still refers to a show.
+func (h *historyStore) showInRecent(id string) bool {
+	for _, r := range h.data.Recent {
+		if r.ShowID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// ClearHistoryEntry forgets one episode: the history row, the watched flag
+// and the resume point.
+//
+// Removing only the row left the episode still ticked in the season list and
+// still holding its position, so "delete from history" deleted the evidence
+// and kept the effect.
 func ClearHistoryEntry(idx int) {
 	hist.mu.Lock()
 	defer hist.mu.Unlock()
@@ -574,7 +662,27 @@ func ClearHistoryEntry(idx int) {
 	if idx < 0 || idx >= len(hist.data.Recent) {
 		return
 	}
+
+	r := hist.data.Recent[idx]
 	hist.data.Recent = append(hist.data.Recent[:idx], hist.data.Recent[idx+1:]...)
+
+	if sh, ok := hist.data.Shows[r.ShowID]; ok {
+		delete(sh.Eps, epKey(r.Season, r.Episode))
+
+		// The show record goes only when nothing needs it: no episode state
+		// and no other history row pointing at it.
+		//
+		// recentEntries drops any row whose show is missing, without
+		// complaint — so removing the show one row too early would take
+		// unrelated rows down with it and look like they were never there.
+		if len(sh.Eps) == 0 && !hist.showInRecent(r.ShowID) {
+			delete(hist.data.Shows, r.ShowID)
+		}
+	}
+	if r.VideoID != "" {
+		delete(hist.byVideo, r.VideoID)
+	}
+
 	hist.touch()
 }
 
@@ -598,6 +706,7 @@ type ContinueItem struct {
 	Duration float64
 
 	NextUp    bool
+	Airing    string // release date, when the next episode isn't out yet
 	LastLabel string
 	Index     int
 	Total     int
@@ -665,9 +774,12 @@ func ContinueTarget() *ContinueItem {
 				item := &ContinueItem{
 					Entry:     e,
 					NextUp:    true,
-					LastLabel: fmtVideoID(top.VideoID),
+					LastLabel: fmtEp(top.Season, top.Episode, top.VideoID),
 					Index:     top.NextEpisode,
 					Total:     top.EpisodeTotal,
+				}
+				if !videoAired(Video{Released: top.NextReleased}) {
+					item.Airing = top.NextReleased
 				}
 				// Already started it — resume rather than announce it.
 				if st != nil && st.P > 0 {
@@ -745,9 +857,12 @@ func ContinueList(n int) []ContinueItem {
 					EpisodeTotal: e.EpisodeTotal,
 				},
 				NextUp:    true,
-				LastLabel: fmtVideoID(e.VideoID),
+				LastLabel: fmtEp(e.Season, e.Episode, e.VideoID),
 				Index:     e.NextEpisode,
 				Total:     e.EpisodeTotal,
+			}
+			if !videoAired(Video{Released: e.NextReleased}) {
+				item.Airing = e.NextReleased
 			}
 			if next != nil && next.P > 0 {
 				item.NextUp = false
@@ -803,8 +918,8 @@ func HistoryStats() Stats {
 			if !e.W {
 				continue
 			}
-			season, _ := parseEpKey(k)
-			if season > 0 {
+			_, episode := parseEpKey(k)
+			if episode > 0 {
 				st.Episodes++
 				counted = true
 			} else {

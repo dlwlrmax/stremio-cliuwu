@@ -16,7 +16,8 @@ type streamsMsg struct {
 type streamTarget struct {
 	Meta      Meta
 	MediaType string
-	VideoID   string
+	VideoID   string // identity: history, resume, favourites
+	StreamID  string // what stream addons are asked for; VideoID when empty
 	Label     string
 	Resume    float64
 	Queue     *EpQueue // nil for movies
@@ -33,10 +34,30 @@ type streamScreen struct {
 	providers []string // "all" plus one entry per addon that returned results
 	provIdx   int
 
+	// A filter handed over from the previous episode, applied once results
+	// arrive. Autoplay builds a fresh screen, which would otherwise drop
+	// whatever you'd narrowed the list down to.
+	filter string
+
+	// Hidden by the block list, and whether you've asked to see them anyway.
+	blocked     int
+	showBlocked bool
+
 	list    listModel
 	busy    busy
 	loaded  bool
 	reverse bool
+}
+
+// newStreamScreenFiltered starts with a filter already applied.
+//
+// Autoplay builds a fresh screen for the next episode, which dropped whatever
+// you were filtering by — so having narrowed forty results down to one release
+// group, you'd get all forty again on the next episode.
+func newStreamScreenFiltered(t streamTarget, filter string) *streamScreen {
+	s := newStreamScreen(t)
+	s.filter = filter
+	return s
 }
 
 func newStreamScreen(t streamTarget) *streamScreen {
@@ -54,7 +75,7 @@ func (s *streamScreen) Init() tea.Cmd { return s.load() }
 // reload drops the cached stream list first — used when a link turns out to be
 // dead, which for debrid results usually means the URL simply expired.
 func (s *streamScreen) reload() tea.Cmd {
-	InvalidateStreams(s.target.VideoID)
+	InvalidateStreams(s.target.fetchID())
 	return s.load()
 }
 
@@ -62,7 +83,7 @@ func (s *streamScreen) load() tea.Cmd {
 	s.id = newAsyncID()
 	s.loaded = false
 	id := s.id
-	mt, vid := s.target.MediaType, s.target.VideoID
+	mt, vid := s.target.MediaType, s.target.fetchID()
 	addons := ctx.StreamAddons()
 	return tea.Batch(
 		s.busy.start("fetching streams…"),
@@ -72,11 +93,28 @@ func (s *streamScreen) load() tea.Cmd {
 	)
 }
 
-func (s *streamScreen) Title() string {
-	if s.target.MediaType == "series" {
-		return fmtVideoID(s.target.VideoID)
+// fetchID is the id stream addons are asked for.
+//
+// Separate from VideoID because anime is browsed by imdb id — which gives
+// real seasons — but matched far better by kitsu id. History keys on the
+// browsing id so it stays stable; only the fetch differs.
+func (t streamTarget) fetchID() string {
+	if t.StreamID != "" {
+		return t.StreamID
 	}
-	return "streams"
+	return t.VideoID
+}
+
+func (s *streamScreen) Title() string {
+	if s.target.MediaType != "series" {
+		return "streams"
+	}
+	// The queue has the episode's real numbers; the id may not.
+	if q := s.target.Queue; q != nil && q.Index < len(q.Episodes) {
+		v := q.Episodes[q.Index]
+		return fmtEp(v.Season, v.Episode, s.target.VideoID)
+	}
+	return fmtVideoID(s.target.VideoID)
 }
 
 func (s *streamScreen) Typing() bool { return s.list.Typing() }
@@ -101,6 +139,9 @@ func (s *streamScreen) Footer() string {
 	pairs := [][2]string{
 		{"enter", "play"},
 		{"0-9", "jump"},
+	}
+	if s.blocked > 0 || s.showBlocked {
+		pairs = append(pairs, [2]string{"B", "blocked"})
 	}
 	if ctx.player.State().Alive {
 		// Only meaningful while something's playing — otherwise there's
@@ -142,13 +183,24 @@ func (s *streamScreen) providerFilter() string {
 
 func (s *streamScreen) rebuild() {
 	want := s.providerFilter()
+	terms := ctx.cfg.Blocked
 
 	s.shown = s.shown[:0]
+	s.blocked = 0
+
 	var items []Item
 	for i, st := range s.streams {
 		if want != "" && st.Addon != want {
 			continue
 		}
+
+		// Counted rather than silently dropped. A picker that quietly shows
+		// twelve of forty results is one you stop trusting.
+		if !s.showBlocked && StreamBlocked(st, terms) {
+			s.blocked++
+			continue
+		}
+
 		s.shown = append(s.shown, i)
 		items = append(items, Item{Label: FmtStream(st, s.w)})
 	}
@@ -194,7 +246,17 @@ func (s *streamScreen) providerBar() string {
 			parts = append(parts, stHint.Render(" "+label+" "))
 		}
 	}
-	return "  " + strings.Join(parts, stHint.Render("·")) + "   " + stHint.Render("tab")
+	out := "  " + strings.Join(parts, stHint.Render("·")) + "   " + stHint.Render("tab")
+
+	// Says so rather than just showing fewer rows, so a short list is never
+	// mistaken for a bad search.
+	switch {
+	case s.showBlocked:
+		out += "   " + stWarn.Render("blocked shown")
+	case s.blocked > 0:
+		out += "   " + stHint.Render(fmt.Sprintf("%d blocked", s.blocked))
+	}
+	return out
 }
 
 // hop moves to an adjacent episode without unwinding the nav stack.
@@ -216,7 +278,8 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 		Meta:      nq.Show,
 		MediaType: "series",
 		VideoID:   v.ID,
-		Label:     nq.Show.Name + " · " + fmtVideoID(v.ID),
+		StreamID:  v.StreamID(),
+		Label:     nq.Show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
 		Resume:    pos,
 		Queue:     &nq,
 	}
@@ -225,7 +288,6 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 	return s.load()
 }
 
-// launch starts playback at an explicit position.
 // request builds the play request for a stream. Shared by launch and queue so
 // the two can't drift — a queued episode has to record exactly the same
 // history and episode context as one played directly.
@@ -245,11 +307,14 @@ func (s *streamScreen) request(st Stream, resume float64) PlayRequest {
 		entry.Season, entry.Episode, entry.EpTitle = t.Queue.Season, v.Episode, v.Title
 		entry.EpisodeTotal = len(t.Queue.Episodes)
 
-		if n, season, ok := t.Queue.Next(); ok {
+		// Upcoming rather than Next: an episode that hasn't aired still needs
+		// recording, or catching up with a season looks like finishing it.
+		if n, season, ok := t.Queue.Upcoming(); ok {
 			entry.NextVideoID = n.ID
 			entry.NextSeason = season
 			entry.NextEpisode = n.Episode
 			entry.NextTitle = n.Title
+			entry.NextReleased = n.Released
 		}
 	}
 
@@ -262,6 +327,11 @@ func (s *streamScreen) request(st Stream, resume float64) PlayRequest {
 		Entry:     entry,
 		Queue:     t.Queue,
 		Addons:    ctx.StreamAddons(),
+
+		VideoHash: st.BehaviorHints.VideoHash,
+		VideoSize: st.BehaviorHints.VideoSize,
+		Filename:  st.BehaviorHints.Filename,
+		Subs:      st.Subtitles,
 	}
 }
 
@@ -376,7 +446,8 @@ func nextEpisodeTarget(prev PlayRequest) (streamTarget, bool) {
 		Meta:      q.Show,
 		MediaType: "series",
 		VideoID:   v.ID,
-		Label:     q.Show.Name + " · " + fmtVideoID(v.ID),
+		StreamID:  v.StreamID(),
+		Label:     q.Show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
 		Queue:     &q,
 	}, true
 }
@@ -399,6 +470,14 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.streams = SortStreams(playable, ctx.cfg.PreferredQuality, ctx.cfg.CachedFirst)
 		s.collectProviders()
 		s.rebuild()
+
+		// Applied once the results are in, since there'd be nothing to
+		// filter before that. Cleared afterwards so it isn't reapplied if
+		// you refetch having deliberately cleared it.
+		if s.filter != "" {
+			s.list.SetQuery(s.filter)
+			s.filter = ""
+		}
 		return s, nil
 
 	case tea.KeyMsg:
@@ -420,6 +499,15 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if len(s.providers) > 1 {
 				s.provIdx = (s.provIdx - 1 + len(s.providers)) % len(s.providers)
 				s.rebuild()
+			}
+		case "B":
+			if s.blocked > 0 || s.showBlocked {
+				s.showBlocked = !s.showBlocked
+				s.rebuild()
+				if s.showBlocked {
+					return s, toast("showing blocked results")
+				}
+				return s, toast("hiding blocked results")
 			}
 		case "n":
 			if i := s.list.Selected(); i >= 0 && i < len(s.shown) {

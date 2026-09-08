@@ -64,10 +64,15 @@ func FmtStream(s Stream, width int) string {
 	}
 	tag := grey("[" + s.Addon + "]")
 
+	// Asked the same way the sort asks, rather than looking for a literal
+	// bolt. Torrentio writes "[TB+]" for a cached TorBox result and never a
+	// ⚡ at all, so the row showed nothing while the sort was floating it to
+	// the top — the two disagreeing about the same stream.
 	cached := ""
-	if strings.Contains(s.Name, "⚡") {
+	switch streamCached(s) {
+	case 1:
 		cached = "⚡"
-	} else if strings.Contains(s.Name, "⏳") {
+	case -1:
 		cached = "⏳"
 	}
 
@@ -79,10 +84,25 @@ func FmtStream(s Stream, width int) string {
 	if res == "" {
 		res = extractRes(cleanTitle)
 	}
-	src  := extractSrc(cleanName)
-	size := extractSize(cleanDesc)
-	if size == "" {
-		size = extractSize(cleanName)
+	src := extractSrc(cleanName)
+
+	// behaviorHints first: videoSize and filename are part of the stream
+	// spec, so where an addon sets them they're exact. Scraping a size out
+	// of free text is a fallback for addons that don't.
+	size := ""
+	if n := s.BehaviorHints.VideoSize; n > 0 {
+		size = fmtBytes(n)
+	}
+	// Title as well as description and name. Torrentio puts the size in a
+	// multi-line title — "filename.mkv\n👤 50 💾 1.44 GB ⚙️ Provider" — which
+	// used to show only because the whole title was rendered as the
+	// filename. Reading behaviorHints.filename instead took that away, so
+	// the size has to be pulled out properly rather than ride along.
+	for _, hay := range []string{cleanDesc, cleanTitle, cleanName} {
+		if size != "" {
+			break
+		}
+		size = extractSize(hay)
 	}
 
 	var parts []string
@@ -91,7 +111,10 @@ func FmtStream(s Stream, width int) string {
 	if src != ""    { parts = append(parts, hi(src)) }
 	if size != ""   { parts = append(parts, grey(size)) }
 
-	filename := cleanTitle
+	filename := stripInvis(s.BehaviorHints.Filename)
+	if filename == "" {
+		filename = cleanTitle
+	}
 	if filename == "" {
 		leftover := resRe.ReplaceAllString(cleanName, "")
 		leftover  = sourceRe.ReplaceAllString(leftover, "")
@@ -123,18 +146,35 @@ func FmtStream(s Stream, width int) string {
 // cachedMarkers are how the common debrid addons signal instant availability.
 // Torrentio uses ⚡ plus a "[RD+]"-style provider tag; ⏳ means it would have to
 // be downloaded first.
-var cachedProviderRe = regexp.MustCompile(`\[(RD|TB|AD|PM|DL|OC|PR)\+\]`)
+// Torrentio marks a debrid result "[TB+]" when it's ready to stream and
+// "[TB download]" when it isn't, per provider. Both are matched precisely
+// rather than by searching for the word "download" anywhere in the row — a
+// release named ...WEB-DL.Download.Edition would otherwise be sorted to the
+// bottom and shown with an hourglass it hasn't earned.
+const debridProviders = `RD|TB|AD|PM|DL|OC|PR|EC`
+
+var (
+	cachedProviderRe  = regexp.MustCompile(`\[(` + debridProviders + `)\+\]`)
+	pendingProviderRe = regexp.MustCompile(`(?i)\[(` + debridProviders + `)\s+download\]`)
+)
 
 // streamCached classifies a stream: 1 cached, -1 explicitly not cached,
 // 0 unknown (a direct HTTP addon, say, where the question doesn't apply).
 func streamCached(s Stream) int {
+	// An addon that states it wins over anything parsed out of the text.
+	if s.Cached != nil {
+		if *s.Cached {
+			return 1
+		}
+		return -1
+	}
+
 	hay := s.Name + " " + s.Title + " " + s.Description
 
 	switch {
 	case strings.Contains(hay, "⚡"), cachedProviderRe.MatchString(hay):
 		return 1
-	case strings.Contains(hay, "⏳"),
-		strings.Contains(strings.ToLower(hay), "download"):
+	case strings.Contains(hay, "⏳"), pendingProviderRe.MatchString(hay):
 		return -1
 	}
 	return 0
@@ -143,6 +183,67 @@ func streamCached(s Stream) int {
 // SortStreams orders the stream list. Cached-first matters more than
 // resolution in practice: picking an uncached debrid result means waiting for
 // the provider to fetch the torrent before mpv gets anything at all.
+// matchWords flattens a release name so terms can be matched against it.
+//
+// Release naming has no agreed separator — the same tag turns up as "AI
+// Upscale", "AI.Upscale" and "Ai_Upscaled" depending on who packed it. Every
+// separator becomes a space, so one term covers all of them, and the result
+// is padded so callers can anchor to word boundaries.
+func matchWords(s string) string {
+	s = strings.ToLower(s)
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '.', '_', '-', '[', ']', '(', ')', '{', '}', ',', '+', '/', ':':
+			return ' '
+		}
+		return r
+	}, s)
+	return " " + strings.Join(strings.Fields(s), " ") + " "
+}
+
+// StreamBlocked reports whether a stream matches any of your blocked terms.
+//
+// Whole words, not substrings. Blocking "cam" should hide a camrip without
+// also hiding Camelot, a film called Cam, or anything from a group with
+// "cam" in its name — a block list you can't trust is worse than none. A
+// trailing * makes a term match the start of a word instead, so "upscale*"
+// covers upscaled and upscaler without listing each.
+//
+// Matched across the name, title, description and filename together: a
+// release is sometimes flagged in the addon's label and sometimes only in
+// the filename.
+func StreamBlocked(s Stream, terms []string) bool {
+	if len(terms) == 0 {
+		return false
+	}
+	hay := matchWords(s.Name + " " + s.Title + " " + s.Description + " " +
+		s.BehaviorHints.Filename)
+
+	for _, raw := range terms {
+		t := strings.TrimSpace(raw)
+		if t == "" {
+			continue
+		}
+
+		prefix := strings.HasSuffix(t, "*")
+		t = matchWords(strings.TrimSuffix(t, "*"))
+		if t = strings.TrimSuffix(t, " "); t == "" || t == " " {
+			continue
+		}
+
+		if prefix {
+			if strings.Contains(hay, t) { // t still carries its leading space
+				return true
+			}
+			continue
+		}
+		if strings.Contains(hay, t+" ") {
+			return true
+		}
+	}
+	return false
+}
+
 // SortStreams orders by addon priority, then cached, then quality.
 //
 // Addon order has to come first. With cached-first as the primary key, an

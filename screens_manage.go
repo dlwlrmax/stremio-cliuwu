@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -61,7 +62,14 @@ func (s *favsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i := s.list.Selected(); i >= 0 {
 				f := s.favs[i]
 				m := Meta{ID: f.ID, Type: f.Type, Name: f.Name, Year: f.Year, Source: f.Source}
-				return s, push(openMeta(m, f.Season))
+				return s, push(openMeta(m, func() int {
+					// A favourited show has season 0 meaning "the whole
+					// thing", not the specials season.
+					if f.Season == 0 {
+						return noSeason
+					}
+					return f.Season
+				}()))
 			}
 		case "d":
 			if i := s.list.Selected(); i >= 0 {
@@ -87,6 +95,11 @@ type historyScreen struct {
 	baseScreen
 	list    listModel
 	entries []HistoryEntry
+	shows   []ShowSummary
+
+	// Grouped by title rather than one row per episode. Clearing a show you
+	// finished months ago otherwise means deleting thirty rows by hand.
+	grouped bool
 }
 
 func newHistoryScreen() *historyScreen {
@@ -98,7 +111,12 @@ func newHistoryScreen() *historyScreen {
 }
 
 func (s *historyScreen) Init() tea.Cmd { return nil }
-func (s *historyScreen) Title() string { return "history" }
+func (s *historyScreen) Title() string {
+	if s.grouped {
+		return "history · by title"
+	}
+	return "history"
+}
 func (s *historyScreen) Typing() bool  { return s.list.Typing() }
 
 func (s *historyScreen) SetSize(w, h int) {
@@ -107,15 +125,30 @@ func (s *historyScreen) SetSize(w, h int) {
 }
 
 func (s *historyScreen) Footer() string {
+	remove := "remove"
+	if s.grouped {
+		remove = "remove title"
+	}
 	return withStatus(s.list.Status(), keyHint(
 		[2]string{"enter", "resume"},
-		[2]string{"d", "remove"},
+		[2]string{"d", remove},
+		[2]string{"tab", "episodes/titles"},
 		[2]string{"D", "clear all"},
 		[2]string{"b/esc", "back"},
 	))
 }
 
 func (s *historyScreen) rebuild() {
+	if s.grouped {
+		s.shows = HistoryShows()
+		items := make([]Item, len(s.shows))
+		for i, sh := range s.shows {
+			items[i] = ShowHistoryItem(sh)
+		}
+		s.list.SetItems(items)
+		return
+	}
+
 	s.entries = LoadHistory().Items
 	items := make([]Item, len(s.entries))
 	for i, e := range s.entries {
@@ -138,17 +171,64 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, cmd
 		}
 		switch k.String() {
+		case "tab":
+			s.grouped = !s.grouped
+			s.rebuild()
+			s.list.Focus(0)
+			return s, nil
+
 		case "enter":
-			if i := s.list.Selected(); i >= 0 {
-				return s, push(resumeScreen(s.entries[i]))
+			i := s.list.Selected()
+			if i < 0 {
+				return s, nil
 			}
+			if s.grouped {
+				if i >= len(s.shows) {
+					return s, nil
+				}
+				sh := s.shows[i]
+				return s, push(openMeta(Meta{
+					ID: sh.ID, Type: sh.Type, Name: sh.Name,
+					Year: sh.Year, Source: sh.Source,
+				}, noSeason))
+			}
+			if i >= len(s.entries) {
+				return s, nil
+			}
+			return s, push(resumeScreen(s.entries[i]))
+
 		case "d":
-			if i := s.list.Selected(); i >= 0 {
-				ClearHistoryEntry(i)
-				invalidateInProgress()
-				s.rebuild()
-				return s, toast("removed")
+			i := s.list.Selected()
+			if i < 0 {
+				return s, nil
 			}
+
+			// A title takes everything with it, so it asks first — the
+			// difference between losing one episode and losing a season is
+			// worth a keypress.
+			if s.grouped {
+				if i >= len(s.shows) {
+					return s, nil
+				}
+				sh := s.shows[i]
+				return s, push(newDestructive("remove title",
+					fmt.Sprintf("remove %s and all %d of its entries?", sh.Name, sh.Episodes),
+					"remove",
+					func() tea.Cmd {
+						ClearShow(sh.ID)
+						invalidateInProgress()
+						s.rebuild()
+						return toast("removed " + sh.Name)
+					}))
+			}
+
+			if i >= len(s.entries) {
+				return s, nil
+			}
+			ClearHistoryEntry(i)
+			invalidateInProgress()
+			s.rebuild()
+			return s, toast("removed")
 		case "D":
 			return s, push(newDestructive("clear history", "clear the entire watch history?", "clear",
 				func() tea.Cmd {
@@ -425,6 +505,28 @@ func (s *settingsScreen) rebuild() {
 			ctx.cfg.CachedFirst = !ctx.cfg.CachedFirst
 			return s.save()
 		}},
+		{label: "blocked terms", sub: "hide streams matching these",
+			badge: orDash(strings.Join(c.Blocked, ", ")), act: func() tea.Cmd {
+				return s.prompt("blocked terms", "ai upscale, cam, telesync",
+					strings.Join(ctx.cfg.Blocked, ", "), func(v string) tea.Cmd {
+						var out []string
+						for _, t := range strings.Split(v, ",") {
+							if t = strings.TrimSpace(t); t != "" {
+								out = append(out, t)
+							}
+						}
+						ctx.cfg.Blocked = out
+						return s.save()
+					},
+					"comma-separated whole words — cam hides a camrip, not Camelot",
+					"trailing * matches word starts: upscale* covers upscaled",
+					"dots and underscores count as spaces, so ai upscale finds AI.Upscale",
+					"hidden from the picker, not deleted — B shows them anyway",
+					"",
+					"the usual junk-quality tags, if you want them:",
+					"  cam, camrip, hdcam, ts, telesync, hdts, tc, telecine,",
+					"  scr, screener, dvdscr, workprint, wp, pdvd")
+			}},
 		{label: "subtitle language", sub: "preferred track, and where S opens",
 			badge: orDash(c.SubtitleLang), act: func() tea.Cmd {
 				help := []string{

@@ -291,10 +291,43 @@ func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
 			Meta SeriesMeta `json:"meta"`
 		}
 		u := fmt.Sprintf("%s/meta/series/%s.json", base, url.PathEscape(m.ID))
-		if getJSON(u, &resp) == nil && len(resp.Meta.Videos) > 0 {
-			cacheSeries.Set(m.ID, resp.Meta)
-			return resp.Meta
+		if getJSON(u, &resp) != nil || len(resp.Meta.Videos) == 0 {
+			continue
 		}
+		for i, v := range resp.Meta.Videos {
+			resp.Meta.Videos[i] = v.fill()
+		}
+
+		// Kitsu files each cour as its own entry, so a long anime arrives as
+		// eight separate "season 1"s. Asking the same addon for the imdb id
+		// it just told us about returns the whole show with real seasons —
+		// and every episode still carries its kitsu reference, so streams can
+		// be requested the accurate way. See Video.StreamID.
+		if id := resp.Meta.ImdbID; id != "" && id != m.ID {
+			var full struct {
+				Meta SeriesMeta `json:"meta"`
+			}
+			fu := fmt.Sprintf("%s/meta/series/%s.json", base, url.PathEscape(id))
+			if getJSON(fu, &full) == nil && len(full.Meta.Videos) > len(resp.Meta.Videos) {
+				for i, v := range full.Meta.Videos {
+					full.Meta.Videos[i] = v.fill()
+				}
+				// Only when this entry is one of the numbered seasons.
+				//
+				// An OVA or a recap collection is filed under season 0 of the
+				// merged series, along with every other special — forty-odd
+				// unrelated shorts in one list. Kitsu already keeps them as
+				// separate titles, which is the more useful shape, so those
+				// keep their own episodes and don't merge.
+				if n, ok := full.Meta.SeasonOf(kitsuIDOf(m.ID)); ok && n > 0 {
+					cacheSeries.Set(m.ID, full.Meta)
+					return full.Meta
+				}
+			}
+		}
+
+		cacheSeries.Set(m.ID, resp.Meta)
+		return resp.Meta
 	}
 
 	empty := SeriesMeta{}

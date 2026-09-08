@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,12 @@ type Subtitle struct {
 	ID   string `json:"id"`
 	URL  string `json:"url"`
 	Lang string `json:"lang"`
+
+	// Not in the spec, but OpenSubtitles sends them and they're the only
+	// thing that makes a list of forty English subtitles choosable — the id
+	// on its own is a database number.
+	SubtitleFileName string `json:"subtitleFileName"`
+	MovieReleaseName string `json:"movieReleaseName"`
 
 	Addon string // injected
 	Rank  int    // injected: the addon's position in your list
@@ -42,11 +49,76 @@ func SubtitleAddons(addons []Addon, mediaType, videoID string) []Addon {
 }
 
 // GetSubtitles asks every subtitle addon at once and merges the results.
-func GetSubtitles(addons []Addon, mediaType, videoID string) []Subtitle {
+// SubsQuery is what the picker knows about the file being played.
+type SubsQuery struct {
+	MediaType string
+	VideoID   string
+
+	// All three come from the stream's behaviorHints, and all three are
+	// extras the protocol defines for this request — stremio-core names them
+	// videoHash, videoSize and videoFilename. The more of them an addon
+	// gets, the better it can pick out subtitles cut for this exact release.
+	Hash     string
+	Size     int64
+	Filename string
+}
+
+// paths are the endpoints worth asking, best first.
+//
+// Addons disagree on what the hash means. OpenSubtitles treats it as a hint
+// and returns hash-matched results plus the rest; AIOStreams treats it as a
+// filter and returns nothing at all when it doesn't recognise one. Since
+// neither behaviour is wrong, both forms get asked and the results merged —
+// hash-matched first, because those are timed to the actual file.
+func (q SubsQuery) paths() []string {
+	plain := q.path(false)
+	if q.Hash == "" && q.Size == 0 && q.Filename == "" {
+		return []string{plain}
+	}
+	return []string{q.path(true), plain}
+}
+
+// path builds the subtitles endpoint.
+//
+// The id is the video id, the same as a stream request — the SDK changed this
+// deliberately for consistency, and the OpenSubtitles hash moved to an extra
+// property. Sending the hash as the id, which an older description of the
+// protocol suggests, gets nothing back at all.
+//
+// The hash is what lets an addon return subtitles timed to the exact release
+// rather than to the episode in general.
+func (q SubsQuery) path(withHints bool) string {
+	t := q.MediaType
+	if t == "" {
+		t = "movie"
+	}
+	base := fmt.Sprintf("/subtitles/%s/%s", t, url.PathEscape(q.VideoID))
+	if !withHints {
+		return base + ".json"
+	}
+
+	var extra []string
+	if q.Hash != "" {
+		extra = append(extra, "videoHash="+url.QueryEscape(q.Hash))
+	}
+	if q.Size > 0 {
+		extra = append(extra, "videoSize="+strconv.FormatInt(q.Size, 10))
+	}
+	if q.Filename != "" {
+		extra = append(extra, "filename="+url.QueryEscape(q.Filename))
+	}
+	if len(extra) == 0 {
+		return base + ".json"
+	}
+	return base + "/" + strings.Join(extra, "&") + ".json"
+}
+
+func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
+	videoID, mediaType := q.VideoID, q.MediaType
 	if videoID == "" {
 		return nil
 	}
-	key := mediaType + ":" + videoID
+	key := mediaType + ":" + videoID + ":" + q.Hash + ":" + q.Filename
 	if v, ok := cacheSubs.Get(key); ok {
 		return v
 	}
@@ -63,21 +135,24 @@ func GetSubtitles(addons []Addon, mediaType, videoID string) []Subtitle {
 		go func(i int, a Addon) {
 			defer wg.Done()
 
-			var resp struct {
-				Subtitles []Subtitle `json:"subtitles"`
-			}
-			u := fmt.Sprintf("%s/subtitles/%s/%s.json",
-				strings.TrimSuffix(a.TransportURL, "/manifest.json"),
-				mediaType, url.PathEscape(videoID))
+			base := strings.TrimSuffix(a.TransportURL, "/manifest.json")
 
-			if getJSON(u, &resp) != nil {
-				return
+			var found []Subtitle
+			for _, p := range q.paths() {
+				var resp struct {
+					Subtitles []Subtitle `json:"subtitles"`
+				}
+				if getJSON(base+p, &resp) != nil {
+					continue
+				}
+				found = append(found, resp.Subtitles...)
 			}
-			for j := range resp.Subtitles {
-				resp.Subtitles[j].Addon = a.Manifest.Name
-				resp.Subtitles[j].Rank = i
+
+			for j := range found {
+				found[j].Addon = a.Manifest.Name
+				found[j].Rank = i
 			}
-			results[i] = resp.Subtitles
+			results[i] = found
 		}(i, a)
 	}
 	wg.Wait()
@@ -136,6 +211,43 @@ func langRank(prefs []string, lang string) int {
 		}
 	}
 	return len(prefs) + 1
+}
+
+// MergeSubtitles combines stream-shipped subtitles with fetched ones, drops
+// duplicates by URL, and orders the result.
+//
+// Shipped ones keep rank 0 so they sort first within their language: they came
+// with this exact file, which is a better claim to matching it than anything
+// found by title.
+func MergeSubtitles(shipped, found []Subtitle, preferred string) []Subtitle {
+	out := make([]Subtitle, 0, len(shipped)+len(found))
+	seen := map[string]bool{}
+
+	for _, set := range [][]Subtitle{shipped, found} {
+		for _, sub := range set {
+			if sub.URL == "" || seen[sub.URL] {
+				continue
+			}
+			seen[sub.URL] = true
+			out = append(out, sub)
+		}
+	}
+
+	SortSubtitles(out, preferred)
+	return out
+}
+
+// Label is what identifies a subtitle to a human.
+//
+// Falls back through the names an addon might send before resorting to the
+// id, which tells you nothing about which release it was cut for.
+func (s Subtitle) Label() string {
+	for _, v := range []string{s.SubtitleFileName, s.MovieReleaseName, s.ID} {
+		if v = strings.TrimSpace(v); v != "" {
+			return v
+		}
+	}
+	return "subtitle"
 }
 
 // SortSubtitles orders by your language preferences, then groups the rest by

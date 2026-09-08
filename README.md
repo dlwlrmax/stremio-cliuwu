@@ -37,8 +37,9 @@ says `—` or you get "mpv not found", set it manually:
 
 ### 2. Add your addons
 
-Cinemeta and Kitsu come pre-installed so you can browse straight away, but you
-need a **stream addon** (Torrentio, etc) before anything will actually play.
+Cinemeta, Kitsu and OpenSubtitles v3 come pre-installed so you can browse
+straight away, but you need a **stream addon** (Torrentio, etc) before anything
+will actually play.
 
 To get an addon's URL:
 
@@ -75,6 +76,7 @@ current screen can do.
 | `/` | filter the list |
 | `0-9` | jump straight to a numbered stream |
 | `i` | show info for whatever's highlighted |
+| `S` | subtitles for what's playing |
 | `tab` | switch provider / category |
 | `X` | stop mpv |
 | `ctrl+q` | quit |
@@ -96,12 +98,40 @@ Pause and seek aren't bound — do that in the mpv window, it's right there.
 stremio-cliuwu                     the main menu
 stremio-cliuwu chuunibyou          search for it
 stremio-cliuwu -a chuunibyou       search anime only
-stremio-cliuwu -sf -a chuunibyou   ...and open the first result
+stremio-cliuwu -sf -a chuunibyou   ...and open the first hit
 stremio-cliuwu -m                  browse movies
 ```
 
 `-m` movies, `-t` shows, `-a` anime, `-s` search, `-sf` search and open the
 first result. `--help` for the rest.
+
+## Bits worth knowing
+
+**Cached streams float to the top.** Torrentio marks instantly-available
+debrid results with `⚡`. Uncached ones need downloading first, so they get
+sorted below. Turn it off in settings if you'd rather not.
+
+**It picks up where you left off.** Continue watching is on the main menu, and
+selecting something you've partly watched asks whether to resume or start over.
+
+**Next episode loads itself.** Near the end of an episode it fetches the next
+one's streams and puts them on screen, so when the current one ends you just
+pick and go.
+
+**Watched isn't a flat percentage.** A ten minute cartoon and a two hour film
+shouldn't need the same fraction watched to count as finished, so the
+threshold scales with runtime.
+
+**`i` opens an info panel** with the synopsis, cast and rating — on catalogs,
+seasons and episodes. It opens itself on a wide enough terminal. Posters are
+off by default under settings; they're block art, so temper expectations.
+
+**`S` picks subtitles** while something's playing, from any addon that
+serves them. It opens on whatever you've set as your subtitle language —
+that setting takes a list, so `eng, en, English` all count as English.
+
+**`D` downloads a stream.** One at a time, resumable, into a folder layout you
+can change in settings. Progress shows at the bottom wherever you are.
 
 ## Heads up
 
@@ -129,6 +159,15 @@ Lives in `~/.config/stremio-cliuwu/` (or `%APPDATA%\stremio-cliuwu\`):
 
 Everything in `config.json` is editable from the settings screen, so you
 shouldn't need to touch these by hand.
+
+## 3.0
+
+Rewritten in [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+
+Also dropped the Stremio account login — it used to sign in and pull your addon
+list down, now you just paste the URLs in. Catalogs and search come from your
+installed addons rather than being hardcoded, so adding an addon actually adds
+something to browse.
 
 ## Licence
 

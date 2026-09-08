@@ -375,7 +375,7 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 				return s, s.loadPage(len(s.metas))
 			}
-			return s, push(openMeta(s.metas[i], 0))
+			return s, push(openMeta(s.metas[i], noSeason))
 		case "f":
 			if i := s.list.Selected(); i >= 0 && !s.moreRow(i) {
 				mt := s.metas[i]
@@ -523,7 +523,7 @@ func (s *searchScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 		if s.autoOpen && !s.autoDone && len(s.shown) > 0 {
 			s.autoDone = true
-			return s, push(openMeta(s.metas[s.shown[0]], 0))
+			return s, push(openMeta(s.metas[s.shown[0]], noSeason))
 		}
 		return s, s.syncInfo()
 
@@ -546,7 +546,7 @@ func (s *searchScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.syncInfo()
 		case "enter":
 			if i := s.list.Selected(); i >= 0 && i < len(s.shown) {
-				return s, push(openMeta(s.metas[s.shown[i]], 0))
+				return s, push(openMeta(s.metas[s.shown[i]], noSeason))
 			}
 		case "f":
 			if i := s.list.Selected(); i >= 0 && i < len(s.shown) {

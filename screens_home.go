@@ -112,8 +112,8 @@ func (s *menuScreen) rebuild() {
 		e := c.Entry
 
 		what := e.Name
-		if e.Season > 0 && e.Episode > 0 {
-			what += " · " + fmtVideoID(e.VideoID)
+		if e.Episode > 0 {
+			what += " · " + fmtEp(e.Season, e.Episode, e.VideoID)
 		}
 		if e.EpTitle != "" {
 			what += " — " + e.EpTitle
@@ -127,6 +127,16 @@ func (s *menuScreen) rebuild() {
 			detail = "finished " + c.LastLabel
 			if c.Total > 0 {
 				detail += fmt.Sprintf(" · %d/%d", c.Index, c.Total)
+			}
+
+			// Caught up rather than finished: say when it lands, so a season
+			// you're up to date with doesn't look like one you've completed.
+			if c.Airing != "" {
+				label = "waiting"
+				detail = "airs " + fmtRelease(c.Airing)
+				if when := untilRelease(c.Airing); when != "" {
+					detail += " · " + when
+				}
 			}
 		} else {
 			pos, dur := c.Position, c.Duration
@@ -327,11 +337,20 @@ func (s *menuScreen) View() string {
 func resumeScreen(e HistoryEntry) screen {
 	m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Year: e.Year, Source: e.Source}
 
-	if e.Type == "series" && e.Season > 0 {
+	// Episode number, not season: a special sits in season 0 and would
+	// otherwise be resumed as if it were a film.
+	if e.Type == "series" && e.Episode > 0 {
 		s := newSeasonScreen(m, e.Season)
 		s.autoEpisode = e.Episode
 		s.autoResume = e.Position
 		return s
+	}
+
+	// A library entry has no streams to pick from — its files are the
+	// content, so go back to the list rather than to a stream picker that
+	// would ask an addon about a file id and get nothing.
+	if e.Type == "other" {
+		return newFileListScreen(m)
 	}
 
 	videoID := e.ID

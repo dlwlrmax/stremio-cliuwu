@@ -354,7 +354,7 @@ func (p *infoPane) renderEpisode() string {
 
 	var out []string
 
-	for _, ln := range lines(wrap.Render(fmtVideoID(v.ID))) {
+	for _, ln := range lines(wrap.Render(fmtEp(v.Season, v.Episode, v.ID))) {
 		out = append(out, stKey.Render(ln))
 	}
 	if v.Title != "" {

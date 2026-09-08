@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Every list row is built here.
@@ -23,7 +24,7 @@ func metaItem(m Meta) Item {
 	return Item{
 		Label: bold(m.Name),
 		Sub:   "(" + yr + ")",
-		Badge: sourceTag(m.Source),
+		Badge: kindTag(m.Source, m.Type),
 	}
 }
 
@@ -60,7 +61,7 @@ func HistoryItem(e HistoryEntry) Item {
 		yr = "?"
 	}
 	ep := ""
-	if e.Season > 0 && e.Episode > 0 {
+	if e.Episode > 0 {
 		ep = fmt.Sprintf("  S%02dE%02d", e.Season, e.Episode)
 		if e.EpTitle != "" {
 			ep += "  " + e.EpTitle
@@ -68,7 +69,7 @@ func HistoryItem(e HistoryEntry) Item {
 	}
 	label := bold(e.Name) + grey("  ("+yr+")") + ep
 
-	badge := sourceTag(e.Source)
+	badge := kindTag(e.Source, e.Type)
 	if e.Watched {
 		badge += "  " + good("✓")
 	} else if e.Position > 0 && e.Duration > 0 {
@@ -84,6 +85,43 @@ func HistoryItem(e HistoryEntry) Item {
 	return Item{Label: label, Badge: badge, Watched: e.Watched}
 }
 
+// ShowHistoryItem is a title row in the grouped history view.
+func ShowHistoryItem(sh ShowSummary) Item {
+	// No "(?)" filler. A library entry is a torrent name with no release
+	// year to know, so an empty pair of brackets says nothing except that
+	// something is missing.
+	label := bold(sh.Name)
+	if sh.Year != "" {
+		label += "  " + grey("("+sh.Year+")")
+	}
+
+	// A library entry holds files, a series holds episodes, and a film is
+	// just itself — calling any of them by the wrong noun reads as a bug.
+	noun := "episode"
+	if sh.Type == "other" {
+		noun = "file"
+	}
+
+	sub := "film"
+	switch {
+	case sh.Type == "movie":
+	case sh.Episodes == 1:
+		sub = "1 " + noun
+	default:
+		sub = fmt.Sprintf("%d %ss", sh.Episodes, noun)
+	}
+
+	badge := kindTag(sh.Source, sh.Type)
+	if sh.SeenAt > 0 {
+		kind := "dmy"
+		if ctx != nil {
+			kind = ctx.cfg.DateFormat
+		}
+		badge = grey(time.Unix(sh.SeenAt, 0).Format(dateLayout(kind))) + "  " + badge
+	}
+	return Item{Label: label, Sub: sub, Badge: badge}
+}
+
 func FavItem(f Favourite) Item {
 	yr := f.Year
 	if yr == "" {
@@ -96,7 +134,7 @@ func FavItem(f Favourite) Item {
 	label := fmt.Sprintf("%s  %s", bold(f.Name), grey("("+yr+")"))
 
 	// Get watch progress from history
-	badge := sourceTag(f.Source) + season
+	badge := kindTag(f.Source, f.Type) + season
 	if f.Type == "series" {
 		h := LoadHistory()
 		var lastEntry *HistoryEntry
@@ -114,7 +152,7 @@ func FavItem(f Favourite) Item {
 				badge += "  " + good("✓")
 			} else if lastEntry.Position > 0 && lastEntry.Duration > 0 {
 				badge += "  " + yell("▶ "+fmtSecs(lastEntry.Position))
-			} else if lastEntry.Season > 0 && lastEntry.Episode > 0 {
+			} else if lastEntry.Episode > 0 {
 				badge += "  " + grey(fmt.Sprintf("S%02dE%02d", lastEntry.Season, lastEntry.Episode))
 			}
 		}
@@ -147,6 +185,17 @@ func AddonItem(ref AddonRef, a *Addon) Item {
 		sub = strings.Join(caps, " · ")
 		if a.Manifest.Version != "" {
 			badge = grey("v" + a.Manifest.Version)
+		}
+
+		// Flags the addon declares about itself. Configuration especially:
+		// an addon awaiting setup returns empty results rather than errors,
+		// so without this it just looks broken.
+		h := a.Manifest.BehaviorHints
+		if h.P2P {
+			badge = stWarn.Render("p2p") + "  " + badge
+		}
+		if h.ConfigurationRequired {
+			badge = bad("needs configuring") + "  " + badge
 		}
 	}
 

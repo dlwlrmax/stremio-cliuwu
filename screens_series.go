@@ -24,7 +24,7 @@ type seasonScreen struct {
 	baseScreen
 	id      asyncID
 	show    Meta
-	jumpTo  int // season to open immediately (from favourites/history)
+	jumpTo  int // season to open immediately, or noSeason for none
 	jumped  bool
 
 	// Set when resuming from history: the episode to open, and where in it.
@@ -63,9 +63,13 @@ func (s *seasonScreen) Init() tea.Cmd {
 		s.busy.start("fetching episode list…"),
 		func() tea.Msg {
 			sm := GetSeriesMeta(ctx.addons, m)
+
+			// Season 0 is a real season — it's where specials, OVAs and
+			// recaps live. On a kitsu-backed series it opens a list of those
+			// collections rather than an episode list; see specialsScreen.
 			set := map[int]bool{}
 			for _, v := range sm.Videos {
-				if v.Season > 0 {
+				if v.Episode > 0 {
 					set[v.Season] = true
 				}
 			}
@@ -100,8 +104,21 @@ func (s *seasonScreen) Footer() string {
 
 func (s *seasonScreen) rebuild() {
 	states := EpisodeStates(s.show.ID)
+	specials := groupSpecials(s.sm.Videos)
+
 	items := make([]Item, len(s.seasons))
 	for i, season := range s.seasons {
+		// The specials row opens a list of collections, not episodes, so a
+		// watched-count over the merged season 0 describes something you
+		// never see — 0/39 for what turns out to be two titles.
+		if season == 0 && len(specials) > 1 {
+			items[i] = Item{
+				Label: bold(seasonLabel(season)),
+				Badge: grey(fmt.Sprintf("%d titles", len(specials))),
+			}
+			continue
+		}
+
 		total, done, upcoming := 0, 0, 0
 		for _, v := range s.sm.Videos {
 			if v.Season != season {
@@ -127,7 +144,7 @@ func (s *seasonScreen) rebuild() {
 			badge += "  " + stWarn.Render(fmt.Sprintf("+%d upcoming", upcoming))
 		}
 		items[i] = Item{
-			Label:   bold(fmt.Sprintf("season %d", season)),
+			Label:   bold(seasonLabel(season)),
 			Badge:   badge,
 			Watched: aired > 0 && done == aired,
 		}
@@ -144,14 +161,35 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.busy.stop()
 		s.loaded = true
 		s.sm, s.seasons = m.sm, m.seasons
+
+		// Regrouped: take on the series' own identity as well as its
+		// episodes. Otherwise the header still says "Attack on Titan Season
+		// 3" over a list of every season — and, worse, history keys on the
+		// cour you came in through, so watching season 1 and season 3 builds
+		// two separate records for one show.
+		landOn, regrouped := 0, false
+		if s.sm.ID != "" && s.sm.ID != s.show.ID {
+			landOn, regrouped = s.sm.SeasonOf(kitsuIDOf(s.show.ID))
+			s.show.ID = s.sm.ID
+			if s.sm.Name != "" {
+				s.show.Name = s.sm.Name
+			}
+			if s.sm.Year != "" {
+				s.show.Year = s.sm.Year
+			}
+		}
+
 		s.rebuild()
+		if regrouped && s.jumpTo < 0 {
+			s.list.Focus(indexOfSeason(s.seasons, landOn))
+		}
 
 		// When we're jumping straight past this screen, don't start the info
 		// fetch: the response is delivered to whatever is on top, which by
 		// then is the episode screen, so it would arrive at the wrong place
 		// and leave this panel permanently waiting. refreshTop picks it up
 		// when you come back instead.
-		if s.jumpTo > 0 && !s.jumped {
+		if s.jumpTo >= 0 && !s.jumped {
 			s.jumped = true
 			for i, season := range s.seasons {
 				if season == s.jumpTo {
@@ -193,9 +231,19 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			s.layout()
 			return s, s.syncInfo()
 		case "enter":
-			if i := s.list.Selected(); i >= 0 {
-				return s, push(newEpisodeScreen(s.show, s.sm, s.seasons[i]))
+			i := s.list.Selected()
+			if i < 0 {
+				return s, nil
 			}
+			season := s.seasons[i]
+
+			// Specials on a kitsu-backed series are half a dozen separate
+			// releases sharing one season number, so offer those rather than
+			// a flat run of unrelated shorts.
+			if season == 0 && len(groupSpecials(s.sm.Videos)) > 1 {
+				return s, push(newSpecialsScreen(s.show, s.sm))
+			}
+			return s, push(newEpisodeScreen(s.show, s.sm, season))
 		case "f":
 			// Favourite what the screen is showing, not what the cursor
 			// happens to be sitting on. Press f inside a season to pin that
@@ -226,9 +274,9 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				s.rebuild()
 				s.list.Focus(i)
 				if all {
-					return s, toast(fmt.Sprintf("season %d marked unwatched", season))
+					return s, toast(seasonLabel(season) + " marked unwatched")
 				}
-				return s, toast(fmt.Sprintf("season %d marked watched", season))
+				return s, toast(seasonLabel(season) + " marked watched")
 			}
 		case "esc", "backspace":
 			return s, pop()
@@ -304,7 +352,7 @@ func (s *episodeScreen) Init() tea.Cmd {
 	)
 }
 
-func (s *episodeScreen) Title() string { return fmt.Sprintf("season %d", s.season) }
+func (s *episodeScreen) Title() string { return seasonLabel(s.season) }
 func (s *episodeScreen) Typing() bool  { return s.list.Typing() }
 
 func (s *episodeScreen) SetSize(w, h int) {
@@ -453,20 +501,21 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				// video list is right here, so next-up works from a marked
 				// episode rather than only from a played one.
 				q := EpQueue{Show: s.show, Season: s.season, Episodes: s.eps, Index: i, All: s.sm.Videos}
-				if n, season, ok := q.Next(); ok {
+				if n, season, ok := q.Upcoming(); ok {
 					e.NextVideoID = n.ID
 					e.NextSeason = season
 					e.NextEpisode = n.Episode
 					e.NextTitle = n.Title
+					e.NextReleased = n.Released
 				}
 
 				now := ToggleWatchedByEpisode(e)
 				s.rebuild()
 				s.list.Focus(i)
 				if now {
-					return s, toast("marked " + fmtVideoID(v.ID) + " watched")
+					return s, toast("marked " + fmtEp(v.Season, v.Episode, v.ID) + " watched")
 				}
-				return s, toast("marked " + fmtVideoID(v.ID) + " unwatched")
+				return s, toast("marked " + fmtEp(v.Season, v.Episode, v.ID) + " unwatched")
 			}
 		case "W":
 			// Whole season, in one write rather than one per episode.
@@ -485,9 +534,9 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				s.list.Focus(cur)
 			}
 			if allWatched {
-				return s, toast(fmt.Sprintf("season %d marked unwatched", s.season))
+				return s, toast(seasonLabel(s.season) + " marked unwatched")
 			}
-			return s, toast(fmt.Sprintf("season %d marked watched", s.season))
+			return s, toast(seasonLabel(s.season) + " marked watched")
 		case "esc", "backspace":
 			return s, pop()
 		case "q":
@@ -504,7 +553,8 @@ func (s *episodeScreen) streamFor(i int, resume float64) screen {
 		Meta:      s.show,
 		MediaType: "series",
 		VideoID:   v.ID,
-		Label:     s.show.Name + " · " + fmtVideoID(v.ID),
+		StreamID:  v.StreamID(),
+		Label:     s.show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
 		Resume:    resume,
 		Queue: &EpQueue{
 			Show: s.show, Season: s.season, Episodes: s.eps, Index: i,

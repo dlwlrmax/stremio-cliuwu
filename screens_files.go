@@ -32,6 +32,53 @@ func (v FileVideo) URL() string {
 	return v.Streams[0].URL
 }
 
+// QueueEntry downloads every file in a library entry.
+//
+// Offered from the catalog list as well as from inside an entry: a library
+// row is usually one whole pack, and having to open it just to press A is a
+// step for nothing. Runs off the UI goroutine — it fetches before queueing.
+func QueueEntry(m Meta) (string, bool) {
+	if ctx.cfg.DownloadDir == "" {
+		return "set a download location in settings first", false
+	}
+
+	videos, err := FetchFiles(m)
+	if err != nil {
+		return err.Error(), false
+	}
+	if len(videos) == 0 {
+		return "no files in " + m.Name, false
+	}
+
+	// Same trimming the file list does, so a download started from either
+	// place lands in the same layout.
+	paths := make([]string, len(videos))
+	for i, v := range videos {
+		paths[i] = strings.TrimPrefix(v.Title, "/")
+	}
+	prefix := commonDirPrefix(paths)
+
+	queued := 0
+	for i, v := range videos {
+		if v.URL() == "" {
+			continue
+		}
+		rel := strings.TrimPrefix(paths[i], prefix)
+		path := LibraryPath(ctx.cfg.DownloadDir, m.Name, rel)
+		if _, ok := ctx.downloader.Add(baseName(rel), v.URL(), path); ok {
+			queued++
+		}
+	}
+
+	switch {
+	case queued == 0:
+		return "nothing new to queue", false
+	case queued == 1:
+		return "queued 1 file", true
+	}
+	return fmt.Sprintf("queued %d files", queued), true
+}
+
 // FetchFiles pulls the file list for one catalog item.
 func FetchFiles(m Meta) ([]FileVideo, error) {
 	base := m.Base
@@ -176,8 +223,14 @@ func (s *fileListScreen) Footer() string {
 	pairs := [][2]string{
 		{"enter", "play"},
 		{"0-9", "jump"},
-		{"s", "sort"},
 	}
+	if ctx.player.State().Alive {
+		pairs = append(pairs, [2]string{"n", "play next"})
+	}
+	pairs = append(pairs,
+		[2]string{"D", "download"},
+		[2]string{"A", "download all"},
+		[2]string{"s", "sort"})
 	if s.nested {
 		pairs = append(pairs, [2]string{"F", "flat/folders"})
 	}
@@ -191,6 +244,131 @@ type fileRow struct {
 	dir   bool
 	count int // files beneath, for directories
 	idx   int // index into videos, for files
+}
+
+// request builds the play request for a library file. Shared by play and
+// queue so the two can't record different history for the same file.
+// request builds the play request for the file at index idx in s.videos.
+//
+// History records the entry as the title and the file as one item under it,
+// rather than filing every file as its own film. A season pack then appears
+// once with twelve items instead of twelve unrelated "films", and clearing it
+// is one action.
+//
+// The index doubles as the episode number: files here have no season or
+// episode of their own, and without something to tell them apart they'd all
+// collide on the same key under the entry.
+func (s *fileListScreen) request(idx int) PlayRequest {
+	v := s.videos[idx]
+	file := baseName(v.Title)
+
+	name := s.meta.Name
+	if name == "" {
+		name = file
+	}
+
+	return PlayRequest{
+		VideoID:   v.ID,
+		MediaType: "other",
+		Label:     file,
+		URL:       v.URL(),
+		Entry: HistoryEntry{
+			Name: name, ID: s.meta.ID, Type: "other",
+			Source: s.meta.Source, Year: s.meta.Year,
+			Episode: idx + 1, EpTitle: file,
+			EpisodeTotal: len(s.videos),
+			VideoID:      v.ID,
+		},
+	}
+}
+
+// queueNext lines a file up to follow whatever is playing — the same n as on
+// the stream picker. A season pack is the case it exists for: you're on
+// episode one and want the next without going anywhere.
+func (s *fileListScreen) queueNext(idx int) tea.Cmd {
+	if !ctx.player.State().Alive {
+		return toastErr("nothing is playing to queue behind")
+	}
+	if s.videos[idx].URL() == "" {
+		return toastErr("no stream url for that file")
+	}
+
+	req := s.request(idx)
+	if q := ctx.player.Queued(); q != nil && q.VideoID == req.VideoID {
+		ctx.player.Unqueue()
+		return tea.Batch(toast("removed from up next"), playerStateCmd())
+	}
+
+	ctx.player.Queue(req)
+	return tea.Batch(toast("up next — "+req.Label), playerStateCmd())
+}
+
+// download queues a file, or every file beneath a directory.
+//
+// Whole-folder is the point of this on a library entry: a season pack is one
+// row with twelve files under it, and queueing them one at a time is the
+// thing you'd want the app to do for you.
+func (s *fileListScreen) download(row fileRow) tea.Cmd {
+	var picked []int
+	if row.dir {
+		prefix := s.dir + row.name + "/"
+		for i, rel := range s.rel {
+			if strings.HasPrefix(rel, prefix) {
+				picked = append(picked, i)
+			}
+		}
+	} else {
+		picked = []int{row.idx}
+	}
+	return s.queue(picked)
+}
+
+// queue adds the chosen files, skipping anything already downloaded or
+// waiting.
+func (s *fileListScreen) queue(picked []int) tea.Cmd {
+	if ctx.cfg.DownloadDir == "" {
+		return toastErr("set a download location in settings first")
+	}
+
+	queued, skipped := 0, 0
+	for _, i := range picked {
+		v := s.videos[i]
+		if v.URL() == "" {
+			skipped++
+			continue
+		}
+		path := LibraryPath(ctx.cfg.DownloadDir, s.meta.Name, s.rel[i])
+		if _, ok := ctx.downloader.Add(baseName(s.rel[i]), v.URL(), path); ok {
+			queued++
+		} else {
+			skipped++
+		}
+	}
+
+	switch {
+	case queued == 0 && skipped > 0:
+		return toastErr("nothing new to queue")
+	case queued == 0:
+		return toastErr("no files there")
+	case queued == 1:
+		return toast("queued " + baseName(s.rel[picked[0]]))
+	}
+	return toast(fmt.Sprintf("queued %d files", queued))
+}
+
+// downloadAll queues everything at or below the current directory.
+//
+// D covers a folder row, but a pack with no subfolders has none to press it
+// on — and neither does the root. This is the "all of it" case, which for a
+// season pack is usually what you meant.
+func (s *fileListScreen) downloadAll() tea.Cmd {
+	var picked []int
+	for i, rel := range s.rel {
+		if strings.HasPrefix(rel, s.dir) {
+			picked = append(picked, i)
+		}
+	}
+	return s.queue(picked)
 }
 
 func (s *fileListScreen) rebuild() {
@@ -350,20 +528,18 @@ func (s *fileListScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 			s.list.ClearNum()
 
-			label := baseName(v.Title)
-			// No Cinemeta id here, so history keys off the file's own id.
-			return s, tea.Batch(
-				ctx.player.Play(PlayRequest{
-					VideoID: v.ID,
-					Label:   label,
-					URL:     v.URL(),
-					Entry: HistoryEntry{
-						Name: label, ID: v.ID, Type: "movie",
-						Source: s.meta.Source, VideoID: v.ID,
-					},
-				}),
-				toast("loading "+label+"…"),
-			)
+			req := s.request(s.rows[i].idx)
+			return s, tea.Batch(ctx.player.Play(req), toast("loading "+req.Label+"…"))
+		case "n":
+			if i := s.list.Selected(); i >= 0 && i < len(s.rows) && !s.rows[i].dir {
+				return s, s.queueNext(s.rows[i].idx)
+			}
+		case "D":
+			if i := s.list.Selected(); i >= 0 && i < len(s.rows) {
+				return s, s.download(s.rows[i])
+			}
+		case "A":
+			return s, s.downloadAll()
 		case "esc", "backspace", "b":
 			// Walk back out of the folder tree before leaving the screen.
 			if s.up() {

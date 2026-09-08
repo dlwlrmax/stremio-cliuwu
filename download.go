@@ -224,6 +224,29 @@ func expandPattern(pattern string, vals map[string]string) []string {
 	return segs
 }
 
+// LibraryPath is where a file from a debrid library entry lands.
+//
+// These have no meta behind them — no season, no episode, often no clean
+// title — so the pack's own folder structure is the best thing to preserve.
+// A season pack keeps its layout rather than being flattened into one folder
+// of similarly-named files.
+func LibraryPath(root, pack, rel string) string {
+	if !ctx.cfg.DownloadFolders {
+		return filepath.Join(root, safeName(baseName(rel)))
+	}
+
+	parts := []string{root}
+	if pack != "" {
+		parts = append(parts, safeName(pack))
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		if seg = safeName(seg); seg != "" {
+			parts = append(parts, seg)
+		}
+	}
+	return filepath.Join(parts...)
+}
+
 // DownloadPath works out where a stream should land.
 func DownloadPath(root string, t streamTarget, url string) string {
 	ext := extFromURL(url)

@@ -95,6 +95,13 @@ type PlayRequest struct {
 	Entry     HistoryEntry // written to history when playback starts
 	Queue     *EpQueue     // non-nil for series, drives autoplay
 	Addons    []Addon      // needed to resolve the next episode
+
+	// Carried from the chosen stream so the subtitle picker can ask for
+	// this exact file rather than the title in general.
+	VideoHash string
+	VideoSize int64
+	Filename  string
+	Subs      []Subtitle // shipped with the stream itself
 }
 
 // ── Player ────────────────────────────────────────────────────────────────────
@@ -172,11 +179,21 @@ func (p *Player) AddSubtitle(url, title, lang string) tea.Cmd {
 		if title == "" {
 			title = "subtitle"
 		}
-		if _, err := p.command("sub-add", url, "select", title, lang); err != nil {
-			return toastMsg{text: "mpv wouldn't load that subtitle", isErr: true}
-		}
-		return toastMsg{text: "subtitle on — " + title}
+
+		// Generous: mpv downloads the file before it answers, and some
+		// subtitle hosts are slow enough that four seconds is a false
+		// negative rather than a failure.
+		_, err := p.commandWait(30*time.Second, "sub-add", url, "select", title, lang)
+		return SubtitleAddedMsg{URL: url, Title: title, Err: err}
 	}
+}
+
+// SubtitleAddedMsg reports whether mpv actually took the track, so the picker
+// can mark the one that's really playing rather than the one you last pressed.
+type SubtitleAddedMsg struct {
+	URL   string
+	Title string
+	Err   error
 }
 
 // Queued returns what's lined up, if anything.
@@ -295,6 +312,11 @@ func (p *Player) gone() {
 	st := p.state
 	p.now = nil
 	p.state = PlayerState{}
+
+	// Nothing left to follow. Left set, it would suppress the next-episode
+	// picker for the rest of the session — Queued() being non-nil is what
+	// tells the app a choice has already been made.
+	p.queued = nil
 	p.mu.Unlock()
 
 	if now != nil && st.Duration > 0 && st.Pos > 0 {
@@ -313,7 +335,18 @@ func (p *Player) gone() {
 func (p *Player) sendAsync(fn func()) { go fn() }
 
 // command sends an mpv IPC command and waits for the matching response.
+// command sends an mpv IPC command and waits the default time for a reply.
 func (p *Player) command(args ...any) (map[string]any, error) {
+	return p.commandWait(4*time.Second, args...)
+}
+
+// commandWait is command with its own deadline.
+//
+// Most commands are instant — a seek, a property set. sub-add is not: mpv
+// fetches the file before replying, and a slow subtitle host takes longer
+// than any sane default. Reporting failure at four seconds meant saying a
+// subtitle hadn't loaded while mpv was still loading it.
+func (p *Player) commandWait(wait time.Duration, args ...any) (map[string]any, error) {
 	p.mu.Lock()
 	c := p.conn
 	if c == nil {
@@ -347,7 +380,7 @@ func (p *Player) command(args ...any) (map[string]any, error) {
 			return resp, fmt.Errorf("mpv: %s", e)
 		}
 		return resp, nil
-	case <-time.After(4 * time.Second):
+	case <-time.After(wait):
 		p.mu.Lock()
 		delete(p.pending, id)
 		p.mu.Unlock()
@@ -505,6 +538,15 @@ func (p *Player) onEndFile(reason string) {
 		// open a picker or announce anything, just play it. Off the read loop,
 		// since play() sends a command and this handler runs inside it.
 		if queued != nil {
+			// Cleared before the play, not by it. play() nils the field, but
+			// it runs on another goroutine — until it does, the slot still
+			// holds this request, and a second end-file would hand the same
+			// one over again. Narrow window, silent double-play.
+			p.mu.Lock()
+			p.queued = nil
+			p.state.NextLabel = ""
+			p.mu.Unlock()
+
 			p.sendAsync(func() {
 				if msg := p.play(*queued); msg != nil {
 					p.emit(msg)
