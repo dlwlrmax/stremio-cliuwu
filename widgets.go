@@ -75,7 +75,12 @@ func newPrompt(title, placeholder, initial string, onDone func(string) tea.Cmd, 
 	ti.CursorEnd()
 	ti.Prompt = "› "
 	ti.PromptStyle = stKey
-	ti.CharLimit = 512
+	// No limit. A configured addon url carries its whole configuration as
+	// base64 in the path — debrid keys, provider lists, quality filters —
+	// and those run well past any figure that looks generous for a url.
+	// Silently truncating one produces an addon that fetches nothing and
+	// gives no reason why.
+	ti.CharLimit = 0
 	ti.Width = 60
 	return &promptScreen{title: title, ti: ti, onDone: onDone, help: help}
 }

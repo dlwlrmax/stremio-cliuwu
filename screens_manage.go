@@ -433,8 +433,9 @@ type settingRow struct {
 
 type settingsScreen struct {
 	baseScreen
-	list listModel
-	rows []settingRow
+	list   listModel
+	rows   []settingRow
+	update updateInfo
 }
 
 func newSettingsScreen() *settingsScreen {
@@ -443,13 +444,14 @@ func newSettingsScreen() *settingsScreen {
 	return s
 }
 
-func (s *settingsScreen) Init() tea.Cmd { return nil }
+func (s *settingsScreen) Init() tea.Cmd { return CheckUpdate() }
 func (s *settingsScreen) Title() string { return "settings" }
 func (s *settingsScreen) Typing() bool  { return s.list.Typing() }
 
 func (s *settingsScreen) SetSize(w, h int) {
 	s.baseScreen.SetSize(w, h)
-	s.list.SetSize(w, h-1)
+	// One row shorter: the update line sits below the list.
+	s.list.SetSize(w, h-2)
 }
 
 func (s *settingsScreen) Footer() string {
@@ -645,11 +647,23 @@ func (s *settingsScreen) rebuild() {
 }
 
 func (s *settingsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
+	if m, ok := msg.(updateCheckedMsg); ok {
+		s.update = m.Info
+		return s, nil
+	}
+
 	if k, ok := msg.(tea.KeyMsg); ok {
 		if consumed, cmd := s.list.Update(msg); consumed {
 			return s, cmd
 		}
 		switch k.String() {
+		case "u":
+			// Only when there's somewhere to go — an unadvertised key that
+			// does nothing is worse than no key.
+			if s.update.State == updateAvailable && s.update.URL != "" {
+				_ = openURL(s.update.URL)
+				return s, toast("opened the release page")
+			}
 		case "enter":
 			if i := s.list.Selected(); i >= 0 && i < len(s.rows) && s.rows[i].act != nil {
 				return s, s.rows[i].act()
@@ -673,5 +687,14 @@ func (s *settingsScreen) View() string {
 	if gap := s.w - lipgloss.Width(left) - lipgloss.Width(right) - 2; gap > 1 {
 		head += strings.Repeat(" ", gap) + right
 	}
-	return head + "\n" + s.list.View()
+
+	out := head + "\n" + s.list.View()
+
+	// At the foot rather than the header: it's the least urgent thing here,
+	// and nothing about it should pull attention while you're changing a
+	// setting.
+	if line := s.update.Line(); line != "" {
+		out += "\n  " + line
+	}
+	return out
 }
