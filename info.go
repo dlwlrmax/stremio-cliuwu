@@ -41,6 +41,14 @@ type infoPane struct {
 	poster   string // rendered half-block art
 	gen      int    // poster size generation this was rendered at
 
+	// Kitty graphics state. kittyOn means the pane shows placeholder cells
+	// (see kitty.go) instead of the half-block art above; the pixels live in
+	// the terminal under kittyImg, addressed by URL hash.
+	kittyOn           bool
+	kittyImg          uint32
+	kittyURL          string
+	kittyCols, kittyRows int
+
 	// Episode mode: rendered straight from the season's video list, which
 	// GetSeriesMeta already fetched. No request, no cache, no async.
 	ep     *Video
@@ -132,6 +140,16 @@ func (p *infoPane) Show(m Meta) tea.Cmd {
 	p.poster = ""
 	p.offset = 0
 
+	// Moving to a new title orphans the previous kitty image: its
+	// placeholders leave the screen with the old pane, so drop it from the
+	// terminal now rather than holding the pixels until quit.
+	var drop tea.Cmd
+	if p.kittyImg != 0 {
+		drop = kittyDeleteCmd(p.kittyImg)
+	}
+	p.kittyOn, p.kittyImg, p.kittyURL = false, 0, ""
+	p.kittyCols, p.kittyRows = 0, 0
+
 	p.id = newAsyncID()
 	id := p.id
 	mediaType, metaID, hint := m.Type, m.ID, m.Base
@@ -141,6 +159,7 @@ func (p *infoPane) Show(m Meta) tea.Cmd {
 	addons := ctx.addons
 
 	return tea.Batch(
+		drop,
 		p.busy.start("loading…"),
 		func() tea.Msg {
 			d, ok := GetMetaDetail(addons, mediaType, metaID, hint)
@@ -164,6 +183,14 @@ func (p *infoPane) ShowEpisode(show string, v Video) tea.Cmd {
 	p.loaded = true
 	p.offset = 0
 	p.busy.stop()
+	// Episodes show no poster — free the title's image if one is live.
+	if p.kittyImg != 0 {
+		id := p.kittyImg
+		p.kittyOn, p.kittyImg, p.kittyURL = false, 0, ""
+		p.kittyCols, p.kittyRows = 0, 0
+		return kittyDeleteCmd(id)
+	}
+	p.kittyOn = false
 	return nil
 }
 
@@ -183,6 +210,34 @@ func (p *infoPane) Update(msg tea.Msg) tea.Cmd {
 			p.poster = m.art
 		}
 		return nil
+
+	case kittyPosterMsg:
+		if m.pid == p.posterID {
+			if m.ok {
+				p.kittyOn, p.kittyImg, p.kittyURL = true, m.id, m.url
+				p.kittyCols, p.kittyRows = m.cols, m.rows
+			} else {
+				p.kittyOn = false
+			}
+		}
+		return nil
+
+	case tea.WindowSizeMsg:
+		// SetSize already ran (screens resize before updating), so p.w/p.h
+		// are the new ones. Placeholders reflow with the text on their own;
+		// only a changed rectangle needs re-binding to the live image, and
+		// that sends control bytes, not pixels.
+		if p.kittyOn && p.kittyImg != 0 {
+			if img, ok := cachePosterImg.Get(p.kittyURL); ok {
+				maxW, maxH := posterBudget(ctx.cfg.PosterSize, p.w, p.h)
+				cols, rows := kittyDims(img, maxW, maxH)
+				if cols != p.kittyCols || rows != p.kittyRows {
+					p.kittyCols, p.kittyRows = cols, rows
+					return kittyPlaceCmd(p.kittyImg, cols, rows)
+				}
+			}
+		}
+		return p.busy.update(msg)
 	}
 	return p.busy.update(msg)
 }
@@ -198,6 +253,12 @@ func (p *infoPane) loadPoster() tea.Cmd {
 	p.posterID = newAsyncID()
 	id, url := p.posterID, p.detail.Poster
 	maxW, maxH := posterBudget(ctx.cfg.PosterSize, p.w, p.h)
+
+	// Kitty-capable terminals get the real image via placeholders; the
+	// transmit reports back before any placeholder reaches the View.
+	if kittySupported() {
+		return kittyLoadCmd(id, url, maxW, maxH)
+	}
 
 	return func() tea.Msg {
 		return posterMsg{id: id, url: url, art: FetchPoster(url, maxW, maxH)}
@@ -280,7 +341,14 @@ func (p *infoPane) render() string {
 	// ran long is the wrong trade.
 	var head, body, tail []string
 
-	if p.poster != "" {
+	if p.kittyOn && p.kittyImg != 0 {
+		// Placeholder cells, not pixels: plain diffable text emitting the
+		// bound image where it sits. Capped to the pane width so the
+		// per-line clamp in View stays a no-op — these lines must not be
+		// truncated or restyled.
+		cols := min(p.kittyCols, p.w)
+		head = append(head, lines(kittyBlock(p.kittyImg, cols, p.kittyRows))...)
+	} else if p.poster != "" {
 		head = append(head, lines(p.poster)...)
 	}
 	if d.Poster != "" {
