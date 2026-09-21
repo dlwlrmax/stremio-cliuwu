@@ -151,6 +151,7 @@ func main() {
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
+			kittyCleanup() // free terminal-side poster images, if any
 			if ctx.cfg.CloseMpvOnExit {
 				player.Quit()
 			} else {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"math"
 	"net/http"
 	"os/exec"
 	"runtime"
@@ -40,16 +41,18 @@ import (
 var posterSizes = []string{"small", "medium", "large", "xl", "xxl"}
 
 // posterBudget returns the cell limits for a size, given the panel dimensions.
-// Height is usually the binding constraint in the side panel; the width cap
-// mostly matters when the panel has taken over the screen.
+// Height used to bind first at small sizes (e.g. medium capped at paneH/3),
+// which shrank a 2:3 poster to ~13 cells wide — inherently blurry. Budgets now
+// favor width so the panel width binds instead; the panel scrolls, so extra
+// height is cheaper than lost horizontal resolution.
 func posterBudget(size string, paneW, paneH int) (int, int) {
 	switch size {
 	case "small":
-		return min(paneW, 24), max(4, paneH/5)
+		return min(paneW, 24), max(6, paneH/3)
 	case "large":
-		return min(paneW, 56), max(8, paneH/2)
+		return min(paneW, 56), max(12, paneH*2/3)
 	case "xl":
-		return min(paneW, 72), max(10, paneH*2/3)
+		return min(paneW, 72), max(14, paneH*3/4)
 	case "xxl":
 		// Fills the panel width. Every other size caps height first, which
 		// leaves the width short whenever the panel is taller than it is
@@ -57,7 +60,7 @@ func posterBudget(size string, paneW, paneH int) (int, int) {
 		// than the visible area, since the panel scrolls.
 		return min(paneW, 120), max(14, paneH)
 	}
-	return min(paneW, 40), max(6, paneH/3) // medium
+	return min(paneW, 40), max(10, paneH/2) // medium
 }
 
 // nextPosterSize cycles through the sizes.
@@ -129,15 +132,23 @@ func cellEscape(profile termenv.Profile, tr, tg, tb, br, bg, bb uint8) string {
 
 // ── Scaling ───────────────────────────────────────────────────────────────────
 
-// boxScale downscales by averaging each destination pixel's source box. Slower
-// than nearest neighbour but far less noisy, which matters a lot when the
-// result is 22 cells wide.
+// boxScale downscales by averaging each destination pixel's source box in
+// linear light. Slower than nearest neighbour but far less noisy, which
+// matters a lot when the result is 22 cells wide. Averaging directly in sRGB
+// darkens mid-tones and looks soft/muddy, so each channel goes sRGB -> linear
+// (gamma 2.2), averages there, then converts back.
 func boxScale(src *image.RGBA, w, h int) *image.RGBA {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	sb := src.Bounds()
 	sw, sh := sb.Dx(), sb.Dy()
 	if sw == 0 || sh == 0 || w == 0 || h == 0 {
 		return dst
+	}
+	toLinear := func(c uint8) float64 {
+		return math.Pow(float64(c)/255, 2.2)
+	}
+	toSRGB := func(v float64) uint8 {
+		return uint8(math.Pow(v, 1/2.2)*255 + 0.5)
 	}
 
 	for y := range h {
@@ -153,13 +164,14 @@ func boxScale(src *image.RGBA, w, h int) *image.RGBA {
 				x1 = x0 + 1
 			}
 
-			var r, g, b, n uint32
+			var r, g, b float64
+			var n float64
 			for sy := y0; sy < y1; sy++ {
 				for sx := x0; sx < x1; sx++ {
 					c := src.RGBAAt(sx, sy)
-					r += uint32(c.R)
-					g += uint32(c.G)
-					b += uint32(c.B)
+					r += toLinear(c.R)
+					g += toLinear(c.G)
+					b += toLinear(c.B)
 					n++
 				}
 			}
@@ -167,9 +179,9 @@ func boxScale(src *image.RGBA, w, h int) *image.RGBA {
 				continue
 			}
 			i := dst.PixOffset(x, y)
-			dst.Pix[i+0] = uint8(r / n)
-			dst.Pix[i+1] = uint8(g / n)
-			dst.Pix[i+2] = uint8(b / n)
+			dst.Pix[i+0] = toSRGB(r / n)
+			dst.Pix[i+1] = toSRGB(g / n)
+			dst.Pix[i+2] = toSRGB(b / n)
 			dst.Pix[i+3] = 255
 		}
 	}
@@ -248,6 +260,31 @@ func renderPoster(img *image.RGBA, maxW, maxH int) string {
 	return sb.String()
 }
 
+// posterImg downloads and decodes a poster, cached by URL. Shared by the
+// half-block renderer below and the kitty graphics path in kitty.go.
+func posterImg(url string) (*image.RGBA, bool) {
+	img, ok := cachePosterImg.Get(url)
+	if ok {
+		return img, true
+	}
+	res, err := httpClient.Get(url)
+	if err != nil {
+		return nil, false
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	decoded, _, err := image.Decode(res.Body)
+	if err != nil {
+		return nil, false
+	}
+	img = toRGBA(decoded)
+	cachePosterImg.Set(url, img)
+	return img, true
+}
+
 // FetchPoster downloads and renders a poster. Safe to call from a goroutine.
 func FetchPoster(url string, maxW, maxH int) string {
 	if url == "" || !ctx.cfg.Posters {
@@ -259,23 +296,9 @@ func FetchPoster(url string, maxW, maxH int) string {
 		return art
 	}
 
-	img, ok := cachePosterImg.Get(url)
+	img, ok := posterImg(url)
 	if !ok {
-		res, err := httpClient.Get(url)
-		if err != nil {
-			return ""
-		}
-		defer res.Body.Close()
-
-		if res.StatusCode != http.StatusOK {
-			return ""
-		}
-		decoded, _, err := image.Decode(res.Body)
-		if err != nil {
-			return ""
-		}
-		img = toRGBA(decoded)
-		cachePosterImg.Set(url, img)
+		return ""
 	}
 
 	art := renderPoster(img, maxW, maxH)
