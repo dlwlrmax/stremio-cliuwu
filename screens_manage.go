@@ -25,9 +25,9 @@ func newFavsScreen() *favsScreen {
 	return s
 }
 
-func (s *favsScreen) Init() tea.Cmd  { return nil }
-func (s *favsScreen) Title() string  { return "favourites" }
-func (s *favsScreen) Typing() bool   { return s.list.Typing() }
+func (s *favsScreen) Init() tea.Cmd { return nil }
+func (s *favsScreen) Title() string { return "favourites" }
+func (s *favsScreen) Typing() bool  { return s.list.Typing() }
 
 func (s *favsScreen) SetSize(w, h int) {
 	s.baseScreen.SetSize(w, h)
@@ -117,7 +117,7 @@ func (s *historyScreen) Title() string {
 	}
 	return "history"
 }
-func (s *historyScreen) Typing() bool  { return s.list.Typing() }
+func (s *historyScreen) Typing() bool { return s.list.Typing() }
 
 func (s *historyScreen) SetSize(w, h int) {
 	s.baseScreen.SetSize(w, h)
@@ -545,6 +545,10 @@ func (s *settingsScreen) rebuild() {
 						return s.save()
 					}, help...)
 			}},
+		{label: "autoload subtitles", sub: "fetch your preferred track when a film opens", badge: onOff(c.AutoSubtitle), act: func() tea.Cmd {
+			ctx.cfg.AutoSubtitle = !ctx.cfg.AutoSubtitle
+			return s.save()
+		}},
 		{label: "ask to resume", sub: "off always starts from the beginning", badge: onOff(c.AutoResume), act: func() tea.Cmd {
 			ctx.cfg.AutoResume = !ctx.cfg.AutoResume
 			return s.save()
@@ -562,15 +566,15 @@ func (s *settingsScreen) rebuild() {
 		{head: "library"},
 		{label: "history size", sub: "rows on the history screen · watched state is kept forever",
 			badge: strconv.Itoa(c.HistoryMax), act: func() tea.Cmd {
-			return s.prompt("history size", "300", strconv.Itoa(ctx.cfg.HistoryMax), func(v string) tea.Cmd {
-				n, err := strconv.Atoi(v)
-				if err != nil || n <= 0 {
-					return toastErr("needs to be a positive number")
-				}
-				ctx.cfg.HistoryMax = n
-				return s.save()
-			})
-		}},
+				return s.prompt("history size", "300", strconv.Itoa(ctx.cfg.HistoryMax), func(v string) tea.Cmd {
+					n, err := strconv.Atoi(v)
+					if err != nil || n <= 0 {
+						return toastErr("needs to be a positive number")
+					}
+					ctx.cfg.HistoryMax = n
+					return s.save()
+				})
+			}},
 		{label: "omdb key", sub: "episode titles for imdb shows", badge: orDash(c.OmdbKey), act: func() tea.Cmd {
 			return s.prompt("omdb key", "trilogy", ctx.cfg.OmdbKey, func(v string) tea.Cmd {
 				ctx.cfg.OmdbKey = v
@@ -579,9 +583,9 @@ func (s *settingsScreen) rebuild() {
 		}},
 		{label: "date format", sub: "air dates and release dates",
 			badge: stSub.Render(dateSample(c.DateFormat)) + grey("  "+dateFormatName(c.DateFormat)), act: func() tea.Cmd {
-			ctx.cfg.DateFormat = nextDateFormat(ctx.cfg.DateFormat)
-			return tea.Batch(s.save(), themeChanged())
-		}},
+				ctx.cfg.DateFormat = nextDateFormat(ctx.cfg.DateFormat)
+				return tea.Batch(s.save(), themeChanged())
+			}},
 
 		{head: ""},
 		{head: "appearance"},

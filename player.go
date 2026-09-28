@@ -121,10 +121,11 @@ type Player struct {
 
 	queued     *PlayRequest // plays automatically when the current file ends
 	replacing  bool         // suppress the end-file/stop that a replace generates
-	prefetched bool    // next episode already surfaced for this request
-	seekTo     float64 // pending resume seek, applied on file-loaded
-	lastSave  time.Time // throttles history writes
-	lastEmit  int       // last whole second pushed to the UI
+	prefetched bool         // next episode already surfaced for this request
+	autoSubbed bool         // subtitle autoload already attempted for this request
+	seekTo     float64      // pending resume seek, applied on file-loaded
+	lastSave   time.Time    // throttles history writes
+	lastEmit   int          // last whole second pushed to the UI
 }
 
 func NewPlayer(cfg AppConfig) *Player {
@@ -507,7 +508,64 @@ func (p *Player) onFileLoaded() {
 		p.command("set_property", "pause", false)
 	})
 
+	p.maybeAutoSubtitle()
+
 	p.emit(PlayerStateMsg{State: st})
+}
+
+// maybeAutoSubtitle loads a preferred-language subtitle for the file that just
+// loaded, once per playback.
+//
+// It runs off the read loop because GetSubtitles is a network round trip to
+// every subtitle addon, and the guard is set before that happens so a stray
+// second file-loaded can't fire it twice. A preferred track that shipped with
+// the stream is already timed to this exact file, so if there's one of those
+// there is nothing worth fetching.
+func (p *Player) maybeAutoSubtitle() {
+	p.mu.Lock()
+	now, cfg := p.now, p.cfg
+	skip := now == nil || !cfg.AutoSubtitle || p.autoSubbed
+	if !skip {
+		p.autoSubbed = true
+	}
+	p.mu.Unlock()
+
+	if skip {
+		return
+	}
+
+	prefs := PreferredLangs(cfg.SubtitleLang)
+	for _, s := range now.Subs {
+		if langRank(prefs, langName(s.Lang)) < len(prefs) {
+			return
+		}
+	}
+
+	// Copy the request: a new play() can overwrite p.now while the addons are
+	// being asked, and the subtitle has to match the file that asked for it.
+	req := *now
+	p.sendAsync(func() {
+		subs := MergeSubtitles(req.Subs, GetSubtitles(ctx.addons, SubsQuery{
+			MediaType: req.MediaType,
+			VideoID:   req.VideoID,
+			Hash:      req.VideoHash,
+			Size:      req.VideoSize,
+			Filename:  req.Filename,
+		}), cfg.SubtitleLang)
+
+		// MergeSubtitles sorts by preference, so the first track in one of
+		// your languages is the best one available.
+		for i := range subs {
+			if langRank(prefs, langName(subs[i].Lang)) >= len(prefs) {
+				continue
+			}
+			s := subs[i]
+			if msg := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)(); msg != nil {
+				p.emit(msg)
+			}
+			return
+		}
+	})
 }
 
 func (p *Player) onEndFile(reason string) {
@@ -596,6 +654,7 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	prev, prevSt := p.now, p.state
 	p.replacing = true
 	p.prefetched = false
+	p.autoSubbed = false
 	p.queued = nil // choosing something now supersedes whatever was lined up
 	p.now = &req
 	p.seekTo = req.Resume

@@ -509,32 +509,33 @@ func (q *EpQueue) SeasonEpisodes(season int) []Video {
 // configVersion is bumped whenever a new field needs a non-zero default.
 // Without this, adding a bool to the struct silently gives every existing
 // install `false`, because encoding/json just leaves absent fields alone.
-const configVersion = 12
+const configVersion = 13
 
 type AppConfig struct {
 	Version          int    `json:"version"`
 	MpvPath          string `json:"mpv_path"`
 	PreferredQuality string `json:"preferred_quality"`
 	SubtitleLang     string `json:"subtitle_lang"`
+	AutoSubtitle     bool   `json:"auto_subtitle"`
 
 	// Terms that hide a stream from the picker. Substring, case-insensitive,
 	// matched against everything the addon says about it.
-	Blocked []string `json:"blocked,omitempty"`
-	HistoryMax       int    `json:"history_max"`
-	OmdbKey          string `json:"omdb_key"`
-	AutoNext         bool   `json:"auto_next"`
-	AutoResume       bool   `json:"auto_resume"`
-	CloseMpvOnExit   bool   `json:"close_mpv_on_exit"`
-	CachedFirst      bool   `json:"cached_first"`
-	Accent           string `json:"accent"`
-	AutoInfo         bool   `json:"auto_info"`
-	Posters          bool   `json:"posters"`
-	PosterSize       string `json:"poster_size"`
-	DownloadDir      string `json:"download_dir"`
-	DownloadFolders  bool   `json:"download_folders"`
-	MoviePattern     string `json:"movie_pattern"`
-	EpisodePattern   string `json:"episode_pattern"`
-	DateFormat       string `json:"date_format"`
+	Blocked         []string `json:"blocked,omitempty"`
+	HistoryMax      int      `json:"history_max"`
+	OmdbKey         string   `json:"omdb_key"`
+	AutoNext        bool     `json:"auto_next"`
+	AutoResume      bool     `json:"auto_resume"`
+	CloseMpvOnExit  bool     `json:"close_mpv_on_exit"`
+	CachedFirst     bool     `json:"cached_first"`
+	Accent          string   `json:"accent"`
+	AutoInfo        bool     `json:"auto_info"`
+	Posters         bool     `json:"posters"`
+	PosterSize      string   `json:"poster_size"`
+	DownloadDir     string   `json:"download_dir"`
+	DownloadFolders bool     `json:"download_folders"`
+	MoviePattern    string   `json:"movie_pattern"`
+	EpisodePattern  string   `json:"episode_pattern"`
+	DateFormat      string   `json:"date_format"`
 }
 
 // SetDefaults fills in anything missing. Returns true if it changed something,
@@ -608,6 +609,11 @@ func (c *AppConfig) SetDefaults() bool {
 		// anyway, but seeing the list in the setting is what tells you it
 		// takes a list at all.
 		c.SubtitleLang = "eng, en, English"
+		changed = true
+	}
+
+	if c.Version < 13 {
+		c.AutoSubtitle = true // opt out, not in: most people want subtitles
 		changed = true
 	}
 
