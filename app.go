@@ -14,9 +14,9 @@ import (
 // appCtx is the small pile of state every screen needs. A package-level
 // pointer beats threading five fields through every constructor.
 type appCtx struct {
-	cfg    AppConfig
-	refs   AddonList
-	addons []Addon
+	cfg        AppConfig
+	refs       AddonList
+	addons     []Addon
 	player     *Player
 	downloader *Downloader
 	prog       *tea.Program
@@ -95,12 +95,12 @@ type rebuildable interface{ rebuild() }
 // resyncable is any screen with an info panel to refresh.
 type resyncable interface{ syncInfo() tea.Cmd }
 
-func push(s screen) tea.Cmd    { return func() tea.Msg { return pushMsg{s} } }
-func pop() tea.Cmd             { return func() tea.Msg { return popMsg{1} } }
-func popN(n int) tea.Cmd       { return func() tea.Msg { return popMsg{n} } }
-func popRoot() tea.Cmd         { return func() tea.Msg { return popRootMsg{} } }
+func push(s screen) tea.Cmd       { return func() tea.Msg { return pushMsg{s} } }
+func pop() tea.Cmd                { return func() tea.Msg { return popMsg{1} } }
+func popN(n int) tea.Cmd          { return func() tea.Msg { return popMsg{n} } }
+func popRoot() tea.Cmd            { return func() tea.Msg { return popRootMsg{} } }
 func replaceTop(s screen) tea.Cmd { return func() tea.Msg { return replaceMsg{s} } }
-func toast(s string) tea.Cmd   { return func() tea.Msg { return toastMsg{text: s} } }
+func toast(s string) tea.Cmd      { return func() tea.Msg { return toastMsg{text: s} } }
 
 // playerStateCmd refreshes the player bar from a screen.
 //
@@ -264,6 +264,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// out — which reads as the reorder having done nothing.
 		cacheStreams.Clear()
 		cacheSubs.Clear()
+		cacheSubsMiss.Clear()
 		return a, nil
 
 	case tea.KeyMsg:
@@ -309,13 +310,7 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 		// Global on purpose: you realise you want subtitles a minute into an
 		// episode, by which point the stream list is several screens back.
 		if now := ctx.player.Now(); now != nil {
-			return push(newSubsScreen(now.Label, SubsQuery{
-				MediaType: now.MediaType,
-				VideoID:   now.VideoID,
-				Hash:      now.VideoHash,
-				Size:      now.VideoSize,
-				Filename:  now.Filename,
-			}, now.Subs)), true
+			return push(newSubsScreen(now.Label, SubsQueryFrom(now), now.Subs)), true
 		}
 	}
 	return nil, false
@@ -396,8 +391,8 @@ func quitCmd() tea.Cmd {
 // header disappeared off the top with no way back. Nothing can be floored —
 // if the space isn't there, something has to go.
 type chromeLayout struct {
-	compact    bool // title only, no rules or blank line
-	showRule   bool // divider above the footer
+	compact      bool // title only, no rules or blank line
+	showRule     bool // divider above the footer
 	showToast    bool
 	showPlayer   bool
 	showDownload bool

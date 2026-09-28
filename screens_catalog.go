@@ -141,9 +141,9 @@ func newGenrePicker(ref CatalogRef, onPick func(string) tea.Cmd) *genrePickerScr
 	return s
 }
 
-func (s *genrePickerScreen) Init() tea.Cmd  { return nil }
-func (s *genrePickerScreen) Title() string  { return "genre" }
-func (s *genrePickerScreen) Typing() bool   { return s.list.Typing() }
+func (s *genrePickerScreen) Init() tea.Cmd { return nil }
+func (s *genrePickerScreen) Title() string { return "genre" }
+func (s *genrePickerScreen) Typing() bool  { return s.list.Typing() }
 func (s *genrePickerScreen) Footer() string {
 	return withStatus(s.list.Status(),
 		keyHint([2]string{"enter", "choose"}, [2]string{"/", "filter"}, [2]string{"b/esc", "back"}))
@@ -318,6 +318,24 @@ func (s *catalogScreen) rebuild() {
 // moreRow reports whether an index is the load-more row rather than a title.
 func (s *catalogScreen) moreRow(i int) bool { return i >= len(s.metas) }
 
+// loadMoreThreshold is how close to the end of the list the cursor has to get
+// before the next page is fetched on its own.
+const loadMoreThreshold = 10
+
+// autoLoadMore fetches the next page once the cursor nears the bottom, so
+// scrolling keeps delivering rows without hunting for the load-more row. The
+// manual row stays as a fallback.
+func (s *catalogScreen) autoLoadMore() tea.Cmd {
+	if !s.hasMore || s.loadingMore || !s.loaded || s.list.Typing() {
+		return nil
+	}
+	i := s.list.Selected()
+	if i < 0 || i < len(s.metas)-loadMoreThreshold {
+		return nil
+	}
+	return s.loadPage(len(s.metas))
+}
+
 func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 	switch m := msg.(type) {
 	case catalogPageMsg:
@@ -356,8 +374,9 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		}
 		if consumed, cmd := s.list.Update(msg); consumed {
-			// Cursor may have moved — refresh the pane for the new row.
-			return s, tea.Batch(cmd, s.syncInfo())
+			// Cursor may have moved — refresh the pane for the new row, and
+			// pull the next page if the cursor is now near the bottom.
+			return s, tea.Batch(cmd, s.syncInfo(), s.autoLoadMore())
 		}
 		switch m.String() {
 		case "i":

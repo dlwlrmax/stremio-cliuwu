@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -123,6 +125,7 @@ type Player struct {
 	replacing  bool         // suppress the end-file/stop that a replace generates
 	prefetched bool         // next episode already surfaced for this request
 	autoSubbed bool         // subtitle autoload already attempted for this request
+	playGen    uint64       // bumped on every play(); stale subtitle fetches drop out
 	seekTo     float64      // pending resume seek, applied on file-loaded
 	lastSave   time.Time    // throttles history writes
 	lastEmit   int          // last whole second pushed to the UI
@@ -177,12 +180,19 @@ func (p *Player) Unqueue() {
 // means a dead link fails inside mpv rather than anywhere we can report.
 func (p *Player) AddSubtitle(url, title, lang string) tea.Cmd {
 	return func() tea.Msg {
+		// mpv fetches this itself, and handing it anything that isn't http(s)
+		// is at best a local file it shouldn't be reading on our say-so. The
+		// autoloader treats the error like a dead link and moves on.
+		u, perr := neturl.Parse(url)
+		if perr != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return SubtitleAddedMsg{URL: url, Title: title, Err: errors.New("subtitle url is not http(s)")}
+		}
 		if title == "" {
 			title = "subtitle"
 		}
 
 		// Generous: mpv downloads the file before it answers, and some
-		// subtitle hosts are slow enough that four seconds is a false
+		// subtitle hosts are slow enough that a short wait is a false
 		// negative rather than a failure.
 		_, err := p.commandWait(30*time.Second, "sub-add", url, "select", title, lang)
 		return SubtitleAddedMsg{URL: url, Title: title, Err: err}
@@ -524,7 +534,10 @@ func (p *Player) onFileLoaded() {
 func (p *Player) maybeAutoSubtitle() {
 	p.mu.Lock()
 	now, cfg := p.now, p.cfg
-	skip := now == nil || !cfg.AutoSubtitle || p.autoSubbed
+	gen := p.playGen
+	// "other" is a debrid library / local file: there is no episode id worth
+	// asking a subtitle addon about, so skip it entirely.
+	skip := now == nil || !cfg.AutoSubtitle || p.autoSubbed || now.MediaType == "other"
 	if !skip {
 		p.autoSubbed = true
 	}
@@ -535,34 +548,56 @@ func (p *Player) maybeAutoSubtitle() {
 	}
 
 	prefs := PreferredLangs(cfg.SubtitleLang)
-	for _, s := range now.Subs {
-		if langRank(prefs, langName(s.Lang)) < len(prefs) {
-			return
-		}
+	if len(prefs) == 0 {
+		return
 	}
 
 	// Copy the request: a new play() can overwrite p.now while the addons are
 	// being asked, and the subtitle has to match the file that asked for it.
+	// The subs screen can replace elements of the shipped list in place, so
+	// clone that rather than iterating a slice it may still be writing.
 	req := *now
+	req.Subs = slices.Clone(now.Subs)
+
+	// A preferred track that shipped with the stream is already timed to this
+	// exact file, so there is nothing worth fetching.
+	if PickPreferred(req.Subs, prefs) != nil {
+		return
+	}
+
+	// Snapshot the addon list: LoadAddons replaces it wholesale, and this
+	// goroutine has no lock under which to read the header.
+	addons := slices.Clone(ctx.addons)
 	p.sendAsync(func() {
-		subs := MergeSubtitles(req.Subs, GetSubtitles(ctx.addons, SubsQuery{
-			MediaType: req.MediaType,
-			VideoID:   req.VideoID,
-			Hash:      req.VideoHash,
-			Size:      req.VideoSize,
-			Filename:  req.Filename,
-		}), cfg.SubtitleLang)
+		subs := MergeSubtitles(req.Subs, GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
+
+		// A new play() may have started while the network was slow. Its result
+		// belongs to a file that is no longer loaded, so drop it.
+		p.mu.Lock()
+		stale := p.playGen != gen
+		p.mu.Unlock()
+		if stale {
+			return
+		}
 
 		// MergeSubtitles sorts by preference, so the first track in one of
-		// your languages is the best one available.
+		// your languages is the best one available. A dead link fails inside
+		// mpv, so try each in turn instead of giving up on the first.
 		for i := range subs {
 			if langRank(prefs, langName(subs[i].Lang)) >= len(prefs) {
 				continue
 			}
 			s := subs[i]
-			if msg := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)(); msg != nil {
-				p.emit(msg)
+			msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
+			if msg.Err != nil {
+				continue
 			}
+			notice := "subtitles: " + langName(s.Lang) + " · " + s.Label()
+			if s.Addon != "" {
+				notice += " via " + s.Addon
+			}
+			p.emit(PlayerNoticeMsg{Text: notice})
+			p.emit(msg)
 			return
 		}
 	})
@@ -655,6 +690,7 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	p.replacing = true
 	p.prefetched = false
 	p.autoSubbed = false
+	p.playGen++    // invalidates any subtitle fetch still in flight
 	p.queued = nil // choosing something now supersedes whatever was lined up
 	p.now = &req
 	p.seekTo = req.Resume

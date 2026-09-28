@@ -101,12 +101,12 @@ func (s *subsScreen) collectLangs() {
 	// Land on the first of your preferred languages that actually came back.
 	// The setting is a list, so "eng, en, English" means try each in turn.
 	s.langIx = 0
-outer:
-	for _, want := range PreferredLangs(ctx.cfg.SubtitleLang) {
+	if sub := PickPreferred(s.subs, PreferredLangs(ctx.cfg.SubtitleLang)); sub != nil {
+		want := langName(sub.Lang)
 		for i, l := range s.langs {
 			if i > 0 && l == want {
 				s.langIx = i
-				break outer
+				break
 			}
 		}
 	}
@@ -239,7 +239,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			)
 
 		case "R":
-			cacheSubs.Delete(s.query.MediaType + ":" + s.query.VideoID + ":" + s.query.Hash)
+			dropSubsCache(s.query)
 			s.loaded = false
 			s.id = newAsyncID()
 			return s, s.Init()

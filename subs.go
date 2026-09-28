@@ -35,6 +35,12 @@ type Subtitle struct {
 
 var cacheSubs = newCache[[]Subtitle](10*time.Minute, 60)
 
+// cacheSubsMiss remembers "nothing found" for a much shorter time. Never
+// caching it meant every keystroke in the picker re-asked every addon; caching
+// it for the full ten minutes meant fixing a broken addon looked like it had
+// done nothing.
+var cacheSubsMiss = newCache[[]Subtitle](60*time.Second, 60)
+
 // SubtitleAddons are the installed addons offering subtitles for this item.
 // Reuses the same resource check as streams and meta, so idPrefixes and
 // per-resource type lists are honoured rather than re-implemented here.
@@ -61,6 +67,33 @@ type SubsQuery struct {
 	Hash     string
 	Size     int64
 	Filename string
+}
+
+// SubsQueryFrom builds the subtitle request for a play request, so the picker
+// and the autoloader ask for the same exact file.
+func SubsQueryFrom(req *PlayRequest) SubsQuery {
+	return SubsQuery{
+		MediaType: req.MediaType,
+		VideoID:   req.VideoID,
+		Hash:      req.VideoHash,
+		Size:      req.VideoSize,
+		Filename:  req.Filename,
+	}
+}
+
+// subsCacheKey identifies a subtitle request for the cache. Filename belongs
+// in it: two releases of the same episode hash differently, and without it a
+// refetch after switching streams would hand back the old file's list.
+func subsCacheKey(q SubsQuery) string {
+	return q.MediaType + ":" + q.VideoID + ":" + q.Hash + ":" + q.Filename
+}
+
+// dropSubsCache forgets a hit and a miss for q, so the next request goes back
+// out to the addons.
+func dropSubsCache(q SubsQuery) {
+	key := subsCacheKey(q)
+	cacheSubs.Delete(key)
+	cacheSubsMiss.Delete(key)
 }
 
 // paths are the endpoints worth asking, best first.
@@ -118,8 +151,11 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 	if videoID == "" {
 		return nil
 	}
-	key := mediaType + ":" + videoID + ":" + q.Hash + ":" + q.Filename
+	key := subsCacheKey(q)
 	if v, ok := cacheSubs.Get(key); ok {
+		return v
+	}
+	if v, ok := cacheSubsMiss.Get(key); ok {
 		return v
 	}
 	if mediaType == "" {
@@ -137,17 +173,33 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 
 			base := strings.TrimSuffix(a.TransportURL, "/manifest.json")
 
-			var found []Subtitle
-			for _, p := range q.paths() {
-				var resp struct {
-					Subtitles []Subtitle `json:"subtitles"`
-				}
-				if getJSON(base+p, &resp) != nil {
-					continue
-				}
-				found = append(found, resp.Subtitles...)
+			// Both forms are asked at once. The hash form can return nothing
+			// when the addon doesn't recognise the hash, and the plain form
+			// still returns title matches — waiting for one before starting
+			// the other just doubles the slowest addon's latency.
+			paths := q.paths()
+			sets := make([][]Subtitle, len(paths))
+			var pw sync.WaitGroup
+			for pi, path := range paths {
+				pw.Add(1)
+				go func(pi int, path string) {
+					defer pw.Done()
+					var resp struct {
+						Subtitles []Subtitle `json:"subtitles"`
+					}
+					if getJSON(base+path, &resp) != nil {
+						return
+					}
+					sets[pi] = resp.Subtitles
+				}(pi, path)
 			}
+			pw.Wait()
 
+			// Hash-first order, so hash-matched results win the URL dedup.
+			var found []Subtitle
+			for _, set := range sets {
+				found = append(found, set...)
+			}
 			for j := range found {
 				found[j].Addon = a.Manifest.Name
 				found[j].Rank = i
@@ -169,13 +221,13 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 		}
 	}
 
-	SortSubtitles(out, ctx.cfg.SubtitleLang)
-
-	// Empty results aren't cached. "None found" is usually a broken addon or
-	// one you haven't added yet, and caching it means fixing the addon
-	// appears to change nothing for the next ten minutes.
+	// Deliberately unsorted: both callers feed this into MergeSubtitles,
+	// which orders by their preference. Sorting here would bake whatever
+	// preference happened to be set at fetch time into the shared cache.
 	if len(out) > 0 {
 		cacheSubs.Set(key, out)
+	} else {
+		cacheSubsMiss.Set(key, out)
 	}
 	return out
 }
@@ -211,6 +263,17 @@ func langRank(prefs []string, lang string) int {
 		}
 	}
 	return len(prefs) + 1
+}
+
+// PickPreferred returns the highest-ranked subtitle for prefs, or nil when
+// none of them are in a preferred language.
+func PickPreferred(subs []Subtitle, prefs []string) *Subtitle {
+	for i := range subs {
+		if langRank(prefs, langName(subs[i].Lang)) < len(prefs) {
+			return &subs[i]
+		}
+	}
+	return nil
 }
 
 // MergeSubtitles combines stream-shipped subtitles with fetched ones, drops

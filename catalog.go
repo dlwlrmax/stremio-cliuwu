@@ -15,7 +15,7 @@ import (
 // from the installed manifests.
 
 var (
-	cacheCatalog = newCache[[]Meta](10*time.Minute, 200)
+	cacheCatalog = newCache[catalogResponse](10*time.Minute, 200)
 	cacheSearch  = newCache[[]Meta](5*time.Minute, 100)
 	cacheSeries  = newCache[SeriesMeta](30*time.Minute, 200)
 )
@@ -141,7 +141,10 @@ func catalogURL(ref CatalogRef, skip int, genre string) string {
 	if genre != "" {
 		extras = append(extras, "genre="+url.QueryEscape(genre))
 	}
-	if skip > 0 && ref.Skip {
+	// Trust hasMore over the manifest: an addon that handed back hasMore is
+	// paginating, whether or not it declared "skip". At skip=0 there's nothing
+	// to send either way.
+	if skip > 0 {
 		extras = append(extras, fmt.Sprintf("skip=%d", skip))
 	}
 	if len(extras) == 0 {
@@ -151,14 +154,14 @@ func catalogURL(ref CatalogRef, skip int, genre string) string {
 		ref.Base, ref.Type, url.PathEscape(ref.ID), strings.Join(extras, "&"))
 }
 
-// FetchCatalog pulls one page. skip is ignored by catalogs that don't declare
-// skip support, in which case everything arrives in one response.
+// FetchCatalog pulls one page. The addon's own hasMore drives pagination; a
+// cached page replays the hasMore it was fetched with rather than guessing.
 func FetchCatalog(ref CatalogRef, skip int, genre string) ([]Meta, bool, error) {
 	u := catalogURL(ref, skip, genre)
 
 	key := u
 	if v, ok := cacheCatalog.Get(key); ok {
-		return v, len(v) > 0 && ref.Skip, nil
+		return v.Metas, v.HasMore, nil
 	}
 
 	var resp catalogResponse
@@ -171,7 +174,7 @@ func FetchCatalog(ref CatalogRef, skip int, genre string) ([]Meta, bool, error) 
 		resp.Metas[i].normalize(src, ref.Base)
 	}
 
-	cacheCatalog.Set(key, resp.Metas)
+	cacheCatalog.Set(key, resp)
 	return resp.Metas, resp.HasMore, nil
 }
 
