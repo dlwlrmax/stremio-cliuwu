@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,6 +64,10 @@ type showState struct {
 	Source string `json:"source,omitempty"`
 	Year   string `json:"year,omitempty"`
 	SeenAt int64  `json:"seen_at,omitempty"`
+
+	// Poster is optional and only ever arrives from Stremio. Old files load
+	// fine without it, so the format version doesn't move.
+	Poster string `json:"poster,omitempty"`
 
 	// Keyed "season:episode". Movies use "0:0".
 	Eps map[string]*epState `json:"eps,omitempty"`
@@ -474,6 +479,32 @@ func UpdatePosition(videoID string, pos, duration float64) {
 	hist.touch()
 }
 
+// MarkPositionFinal stamps an episode's sync clock M after its last position
+// write. UpdatePosition deliberately leaves M alone on the per-second ticks —
+// M is the last-write-wins clock and moving it every second would make the
+// sync clock meaningless — but that also means a file that just ended still
+// carries the M from when it was opened. The final P/D would then be pushed
+// under a stale M and lose to an older server copy. Call this after the last
+// UpdatePosition and before the push reads local state.
+func MarkPositionFinal(videoID string) {
+	if videoID == "" {
+		return
+	}
+
+	hist.mu.Lock()
+	defer hist.mu.Unlock()
+	hist.load()
+
+	ref, ok := hist.byVideo[videoID]
+	if !ok {
+		return
+	}
+	if e := hist.ep(ref.showID, ref.key); e != nil {
+		e.M = time.Now().Unix()
+	}
+	hist.touch()
+}
+
 // SetWatchedByEpisode marks an episode watched or unwatched, creating the
 // record if there isn't one.
 func SetWatchedByEpisode(e HistoryEntry, watched bool) {
@@ -590,6 +621,8 @@ type LocalLibraryEntry struct {
 	ID       string
 	Name     string
 	Type     string
+	Poster   string
+	Bitfield string // per-episode watched state; series only
 	Season   int
 	Episode  int
 	Position float64
@@ -621,14 +654,43 @@ func LocalLibrary() []LocalLibraryEntry {
 		if m == 0 {
 			m = sh.SeenAt
 		}
+		var bf string
+		if episode > 0 {
+			bf = watchedBitfield(id, sh)
+		}
 		out = append(out, LocalLibraryEntry{
 			ID: id, Name: sh.Name, Type: sh.Type,
+			Poster: sh.Poster, Bitfield: bf,
 			Season: season, Episode: episode,
 			Position: best.P, Duration: best.D, Watched: best.W,
 			MTime: m,
 		})
 	}
 	return out
+}
+
+// watchedBitfield renders a show's local watched episodes as Stremio's
+// per-episode bitfield. The index space is the episode order by season and
+// episode — the cached meta when the title has been browsed, otherwise the
+// episodes the store has recorded. A show known only sparsely can therefore
+// express only the episodes it has touched; one never recorded here has no
+// index to send. Callers hold the lock.
+func watchedBitfield(showID string, sh *showState) string {
+	eps := orderedEpisodes(showID, sh)
+	if len(eps) == 0 {
+		return ""
+	}
+
+	videos := make([]string, len(eps))
+	watched := map[string]bool{}
+	for i, oe := range eps {
+		v := fmt.Sprintf("%s:%d:%d", showID, oe[0], oe[1])
+		videos[i] = v
+		if st := sh.Eps[epKey(oe[0], oe[1])]; st != nil && st.W {
+			watched[v] = true
+		}
+	}
+	return EncodeWatchedBitfield(videos, watched)
 }
 
 // epMTime is an episode's real last-write clock, falling back to the old T for

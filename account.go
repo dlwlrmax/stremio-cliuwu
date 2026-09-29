@@ -39,15 +39,16 @@ type stremioEnvelope struct {
 	Error  *stremioErr     `json:"error"`
 }
 
-// libraryItem is the subset of Stremio's LibraryItem we actually consume.
-// `watched` (the per-episode bitfield) and behaviorHints are intentionally not
-// decoded: this task maps only the coarse state fields.
+// libraryItem is the subset of Stremio's LibraryItem we handle. The per-episode
+// watched bitfield is decoded via DecodeWatchedBitfield; behaviorHints is still
+// ignored.
 type libraryItem struct {
 	ID      string        `json:"_id"`
 	Name    string        `json:"name"`
 	Type    string        `json:"type"` // "movie" | "series"
 	Removed bool          `json:"removed"`
 	MTime   string        `json:"_mtime"` // RFC3339
+	Poster  string        `json:"poster,omitempty"`
 	State   libraryItemSt `json:"state"`
 }
 
@@ -59,6 +60,7 @@ type libraryItemSt struct {
 	Duration       float64 `json:"duration"`              // ms
 	VideoID        string  `json:"videoId"`               // "id:s:e" for series
 	LastWatched    string  `json:"lastWatched,omitempty"` // RFC3339
+	Watched        string  `json:"watched,omitempty"`     // per-episode bitfield, series only
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -287,12 +289,13 @@ func (e LocalLibraryEntry) toLibraryItem() libraryItem {
 		Duration:    e.Duration * 1000,
 		VideoID:     videoID,
 		LastWatched: mtime,
+		Watched:     e.Bitfield,
 	}
 	if e.Watched {
 		st.TimesWatched = 1
 		st.FlaggedWatched = 1
 	}
-	return libraryItem{ID: e.ID, Name: e.Name, Type: typ, MTime: mtime, State: st}
+	return libraryItem{ID: e.ID, Name: e.Name, Type: typ, MTime: mtime, Poster: e.Poster, State: st}
 }
 
 // ── Merge ─────────────────────────────────────────────────────────────────────
@@ -332,10 +335,29 @@ func MergeLibrary(items []libraryItem) int {
 
 		mtime := parseStremioTime(it.MTime)
 		if local := hist.ep(it.ID, key); local != nil && epMTime(local) >= mtime {
+			// Local progress wins this episode, but a poster is show-level
+			// state, not progress: adopt the server's when we have none, so
+			// the next push can't send an empty poster over it.
+			if it.Poster != "" {
+				if sh := hist.data.Shows[it.ID]; sh != nil && sh.Poster == "" {
+					sh.Poster = it.Poster
+				}
+			}
 			continue // local is newer; remote loses the tie
 		}
 
 		sh := hist.show(it.ID, Meta{Name: it.Name, Type: it.Type, Source: "stremio"})
+		if sh.Poster == "" {
+			sh.Poster = it.Poster
+		}
+
+		// The bitfield carries episodes the coarse videoId pointer doesn't.
+		// Apply it before the single-episode fields below so the anchor's real
+		// position and duration still win over "watched implies finished".
+		if it.Type == "series" && it.State.Watched != "" {
+			hist.applyWatchedBitfield(sh, it.ID, it.State.Watched, mtime)
+		}
+
 		st := sh.Eps[key]
 		if st == nil {
 			st = &epState{}
@@ -361,6 +383,46 @@ func MergeLibrary(items []libraryItem) int {
 	hist.reindex()
 	hist.touch() // dirty + invalidateInProgress + debounced flush
 	return applied
+}
+
+// applyWatchedBitfield marks every episode a remote bitfield reports watched.
+// Index i addresses the i-th episode in the same order the encoder uses; bits
+// past the episodes we know are ignored. The anchor — the most recently
+// watched episode — is marked directly, so it lands even when it isn't in the
+// local ordering yet. Callers hold the lock.
+func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mtime int64) {
+	anchorID, _, bits, err := DecodeWatchedBitfield(bf)
+	if err != nil {
+		return
+	}
+
+	eps := orderedEpisodes(showID, sh)
+	mark := func(season, episode int) {
+		if episode <= 0 {
+			return
+		}
+		key := epKey(season, episode)
+		st := sh.Eps[key]
+		if st == nil {
+			st = &epState{}
+			sh.Eps[key] = st
+		}
+		st.W = true
+		st.T = mtime
+		st.M = mtime
+		if st.P == 0 && st.D > 0 {
+			st.P = st.D
+		}
+	}
+
+	for idx := range bits {
+		if idx >= 0 && idx < len(eps) {
+			mark(eps[idx][0], eps[idx][1])
+		}
+	}
+	if s, e, ok := videoEpisode(anchorID); ok {
+		mark(s, e)
+	}
 }
 
 // videoEpisode pulls (season, episode) out of a Stremio series videoId of the

@@ -643,6 +643,12 @@ func (p *Player) onEndFile(reason string) {
 		defer p.sendAsync(autoSyncPush)
 	}
 
+	// Stamp the final position as the last real change so the push above sees
+	// it as newer than the server's copy. Registered after the push defer so
+	// it runs first (defers are LIFO), and after the switch's UpdatePosition
+	// because defers run on return.
+	defer MarkPositionFinal(now.VideoID)
+
 	switch reason {
 	case "eof":
 		// Watched in full — pin it at 100% so history is unambiguous.
@@ -759,6 +765,7 @@ func (p *Player) Stop() tea.Cmd {
 
 		if now != nil && st.Duration > 0 && st.Pos > 0 {
 			UpdatePosition(now.VideoID, st.Pos, st.Duration)
+			MarkPositionFinal(now.VideoID)
 		}
 		if autoSync && now != nil {
 			p.sendAsync(autoSyncPush)
