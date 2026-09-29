@@ -256,6 +256,17 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case historySyncedMsg:
+		// A background pull rewrote history underneath every cached row, so
+		// rebuild the stack and refetch the top screen's info panel.
+		invalidateInProgress()
+		for _, sc := range a.stack {
+			if r, ok := sc.(rebuildable); ok {
+				r.rebuild()
+			}
+		}
+		return a, a.refreshTop()
+
 	case reloadAddonsMsg:
 		ctx.refs = LoadAddonRefs()
 		ctx.addons = LoadAddons(ctx.refs)

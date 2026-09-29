@@ -89,6 +89,15 @@ func kittyDetect() bool {
 	if os.Getenv("KITTY_WINDOW_ID") != "" {
 		return true
 	}
+	// Over SSH the TERM we inherit describes the connection, not the
+	// terminal drawing the screen: a forwarded "xterm-kitty" can sit in
+	// front of a viewer with no graphics support (or tmux passthrough off),
+	// leaving blank placeholders while the half-block path is skipped.
+	// Distrust every name-based guess; STREMIO_KITTY=1 in kittySupported
+	// stays the explicit opt-in.
+	if os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != "" {
+		return false
+	}
 	if tp := strings.ToLower(os.Getenv("TERM_PROGRAM")); tp != "" {
 		for _, sub := range []string{"kitty", "ghostty", "wezterm"} {
 			if strings.Contains(tp, sub) {

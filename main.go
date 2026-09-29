@@ -12,6 +12,7 @@ import (
 )
 
 const appName = "stremio-cliuwu"
+
 // version is overwritten at build time via
 // -ldflags="-X main.version=…". "dev" is what an untagged local build
 // reports, which is more honest than a hardcoded number that goes stale.
@@ -138,6 +139,13 @@ func main() {
 	downloader.Load()
 
 	WarmHistory()
+
+	// Boot pull: a signed-in account gets one background sync so history from
+	// elsewhere is there before you go looking. Silent — the settings screen's
+	// manual "sync now" is where the counts surface.
+	if cfg.AutoSync {
+		go autoSyncPull(prog)
+	}
 
 	if firstRun {
 		go prog.Send(toastMsg{text: "welcome — add your stream addons under 'addons'"})

@@ -228,11 +228,35 @@ func posterSize(srcW, srcH, maxW, maxH int) (int, int) {
 	return max(w, 1), max(h, 1)
 }
 
+// posterRamp shades a colourless placeholder: dark to light, so the field
+// still reads as an image silhouette on a terminal without colour.
+var posterRamp = []rune("░▒▓█")
+
+// posterPlaceholder draws a deterministic gray half-block field sized to the
+// poster budget. Returning "" left the info pane blank on colourless
+// terminals, so something — anything — must occupy the poster's space.
+func posterPlaceholder(maxW, maxH int) string {
+	cw, ch := posterSize(2, 3, maxW, maxH) // typical 2:3 poster aspect
+	if cw == 0 || ch == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for y := range ch {
+		for x := range cw {
+			sb.WriteRune(posterRamp[(x+2*y)%len(posterRamp)])
+		}
+		if y < ch-1 {
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
+}
+
 // renderPoster turns an image into half-block rows.
 func renderPoster(img *image.RGBA, maxW, maxH int) string {
 	profile := posterColors()
 	if profile == termenv.Ascii {
-		return "" // no colour, no point
+		return posterPlaceholder(maxW, maxH)
 	}
 
 	b := img.Bounds()

@@ -509,7 +509,7 @@ func (q *EpQueue) SeasonEpisodes(season int) []Video {
 // configVersion is bumped whenever a new field needs a non-zero default.
 // Without this, adding a bool to the struct silently gives every existing
 // install `false`, because encoding/json just leaves absent fields alone.
-const configVersion = 13
+const configVersion = 14
 
 type AppConfig struct {
 	Version          int    `json:"version"`
@@ -517,6 +517,7 @@ type AppConfig struct {
 	PreferredQuality string `json:"preferred_quality"`
 	SubtitleLang     string `json:"subtitle_lang"`
 	AutoSubtitle     bool   `json:"auto_subtitle"`
+	AutoSync         bool   `json:"auto_sync"`
 
 	// Terms that hide a stream from the picker. Substring, case-insensitive,
 	// matched against everything the addon says about it.
@@ -614,6 +615,11 @@ func (c *AppConfig) SetDefaults() bool {
 
 	if c.Version < 13 {
 		c.AutoSubtitle = true // opt out, not in: most people want subtitles
+		changed = true
+	}
+
+	if c.Version < 14 {
+		c.AutoSync = true // opt out, not in: a signed-in account keeps itself in step
 		changed = true
 	}
 

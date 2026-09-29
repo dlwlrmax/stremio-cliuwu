@@ -528,9 +528,9 @@ func (p *Player) onFileLoaded() {
 //
 // It runs off the read loop because GetSubtitles is a network round trip to
 // every subtitle addon, and the guard is set before that happens so a stray
-// second file-loaded can't fire it twice. A preferred track that shipped with
-// the stream is already timed to this exact file, so if there's one of those
-// there is nothing worth fetching.
+// second file-loaded can't fire it twice. A track that shipped with the stream
+// is already timed to this exact file and plays via mpv's --slang, so it is
+// only worth fetching when the top-preference language didn't ship.
 func (p *Player) maybeAutoSubtitle() {
 	p.mu.Lock()
 	now, cfg := p.now, p.cfg
@@ -559,9 +559,11 @@ func (p *Player) maybeAutoSubtitle() {
 	req := *now
 	req.Subs = slices.Clone(now.Subs)
 
-	// A preferred track that shipped with the stream is already timed to this
-	// exact file, so there is nothing worth fetching.
-	if PickPreferred(req.Subs, prefs) != nil {
+	// A shipped track in the top-preference language is already timed to this
+	// exact file and will play via mpv's --slang, so there is nothing worth
+	// fetching. A shipped track in a lower-preference language is not enough:
+	// the user still wants a plugin track for the top one.
+	if PickPreferred(req.Subs, prefs[:1]) != nil {
 		return
 	}
 
@@ -580,25 +582,36 @@ func (p *Player) maybeAutoSubtitle() {
 			return
 		}
 
-		// MergeSubtitles sorts by preference, so the first track in one of
-		// your languages is the best one available. A dead link fails inside
-		// mpv, so try each in turn instead of giving up on the first.
-		for i := range subs {
-			if langRank(prefs, langName(subs[i].Lang)) >= len(prefs) {
-				continue
+		// Try each language in preference order. A shipped track in one of
+		// them wins that tier outright — mpv's --slang plays it, so add
+		// nothing. Otherwise the plugin tracks for that language are tried in
+		// merged order (a dead link fails inside mpv, so move on to the next).
+		// A lower tier is only reached when neither source has the language.
+		shipped := make(map[string]bool, len(req.Subs))
+		for _, s := range req.Subs {
+			shipped[s.URL] = true
+		}
+		for _, pref := range prefs {
+			if PickPreferred(req.Subs, []string{pref}) != nil {
+				return
 			}
-			s := subs[i]
-			msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
-			if msg.Err != nil {
-				continue
+			for i := range subs {
+				s := subs[i]
+				if shipped[s.URL] || langName(s.Lang) != pref {
+					continue
+				}
+				msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
+				if msg.Err != nil {
+					continue
+				}
+				notice := "subtitles: " + langName(s.Lang) + " · " + s.Label()
+				if s.Addon != "" {
+					notice += " via " + s.Addon
+				}
+				p.emit(PlayerNoticeMsg{Text: notice})
+				p.emit(msg)
+				return
 			}
-			notice := "subtitles: " + langName(s.Lang) + " · " + s.Label()
-			if s.Addon != "" {
-				notice += " via " + s.Addon
-			}
-			p.emit(PlayerNoticeMsg{Text: notice})
-			p.emit(msg)
-			return
 		}
 	})
 }
@@ -614,12 +627,20 @@ func (p *Player) onEndFile(reason string) {
 	now := p.now
 	st := p.state
 	autoNext := p.cfg.AutoNext
+	autoSync := p.cfg.AutoSync
 	prefetched := p.prefetched
 	queued := p.queued
 	p.mu.Unlock()
 
 	if now == nil {
 		return
+	}
+
+	// One push per file end, whichever branch below returns first. Off the
+	// read loop (sendAsync) and silent; an error end never finished anything
+	// to push.
+	if autoSync && reason != "error" {
+		defer p.sendAsync(autoSyncPush)
 	}
 
 	switch reason {
@@ -731,12 +752,16 @@ func (p *Player) Stop() tea.Cmd {
 	return func() tea.Msg {
 		p.mu.Lock()
 		now, st := p.now, p.state
+		autoSync := p.cfg.AutoSync
 		p.now = nil
 		p.state = PlayerState{Alive: st.Alive}
 		p.mu.Unlock()
 
 		if now != nil && st.Duration > 0 && st.Pos > 0 {
 			UpdatePosition(now.VideoID, st.Pos, st.Duration)
+		}
+		if autoSync && now != nil {
+			p.sendAsync(autoSyncPush)
 		}
 		p.command("quit")
 		return PlayerStateMsg{}

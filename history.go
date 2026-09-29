@@ -25,9 +25,9 @@ import (
 // debounced, turning ~1300 KB/s into about 6 KB every fifteen seconds.
 
 const (
-	flushDelay      = 15 * time.Second
-	defaultRecent   = 300 // fallback when the setting is unreadable
-	historyVer      = 2
+	flushDelay    = 15 * time.Second
+	defaultRecent = 300 // fallback when the setting is unreadable
+	historyVer    = 3
 )
 
 // recentLimit is how many entries the history screen keeps. Watched state is
@@ -48,6 +48,12 @@ type epState struct {
 	P float64 `json:"p,omitempty"` // position, seconds
 	D float64 `json:"d,omitempty"` // duration, seconds
 	T int64   `json:"t,omitempty"` // last touched, unix seconds
+
+	// M is the last real state change: marked watched, an episode opened, a
+	// watched threshold crossed. T is rewritten every playback second, which
+	// makes it useless as a last-write-wins clock for syncing; M only moves
+	// when something actually changed.
+	M int64 `json:"m,omitempty"`
 }
 
 // showState holds a title's details once, with its episodes beneath.
@@ -142,12 +148,22 @@ func (h *historyStore) load() {
 		return
 	}
 
-	// One file, one format. Nothing here reads the old flat array — if that
-	// ever needs moving across, a standalone script can do it once rather
-	// than the app carrying a migration path forever.
+	// The v1 flat array is deliberately not read — if that ever needs moving
+	// across, a standalone script can do it once rather than the app carrying
+	// a migration path forever. v2 → v3 added the real mtime M.
 	var f historyFile
-	if json.Unmarshal(b, &f) != nil || f.Version < historyVer || f.Shows == nil {
+	if json.Unmarshal(b, &f) != nil || f.Version < 2 || f.Shows == nil {
 		return
+	}
+	if f.Version < historyVer {
+		for _, sh := range f.Shows {
+			for _, e := range sh.Eps {
+				if e.M == 0 {
+					e.M = e.T
+				}
+			}
+		}
+		f.Version = historyVer
 	}
 
 	h.data = f
@@ -371,6 +387,7 @@ func AddHistory(e HistoryEntry, maxEntries int) {
 		sh.Eps[key] = &epState{}
 	}
 	sh.Eps[key].T = now
+	sh.Eps[key].M = now
 
 	if e.VideoID != "" {
 		hist.byVideo[e.VideoID] = epRef{showID: e.ID, key: key}
@@ -402,6 +419,31 @@ func (h *historyStore) pushRecent(e HistoryEntry, now int64) {
 	h.trimRecent()
 }
 
+// ensureRecent inserts a history row for a title if one isn't already there,
+// keeping the list newest-first. Merging remote progress needs this: a pulled
+// item has show/episode state but no recent row, so it wouldn't appear on the
+// continue rails. Unlike pushRecent it never moves an existing row, so a pull
+// can't reorder what you watched here. Callers hold the lock.
+func (h *historyStore) ensureRecent(e HistoryEntry, at int64) {
+	for _, r := range h.data.Recent {
+		if r.ShowID == e.ID && r.Season == e.Season && r.Episode == e.Episode {
+			return
+		}
+	}
+
+	i := 0
+	for i < len(h.data.Recent) && h.data.Recent[i].At >= at {
+		i++
+	}
+	h.data.Recent = append(h.data.Recent, recentEntry{})
+	copy(h.data.Recent[i+1:], h.data.Recent[i:])
+	h.data.Recent[i] = recentEntry{
+		ShowID: e.ID, Season: e.Season, Episode: e.Episode,
+		VideoID: e.VideoID, EpTitle: e.EpTitle, Total: e.EpisodeTotal, At: at,
+	}
+	h.trimRecent()
+}
+
 // UpdatePosition records playback progress. Called about once a second, so it
 // only mutates memory — the write is on a timer.
 func UpdatePosition(videoID string, pos, duration float64) {
@@ -423,8 +465,11 @@ func UpdatePosition(videoID string, pos, duration float64) {
 	}
 
 	e.P, e.D, e.T = pos, duration, time.Now().Unix()
-	if IsWatchedAt(pos, duration) {
+	// Only a genuine change to the watched flag moves the sync clock. The
+	// per-second position ticks above keep updating P/D/T alone.
+	if !e.W && IsWatchedAt(pos, duration) {
 		e.W = true
+		e.M = e.T
 	}
 	hist.touch()
 }
@@ -451,6 +496,7 @@ func SetWatchedByEpisode(e HistoryEntry, watched bool) {
 	now := time.Now().Unix()
 	st.W = watched
 	st.T = now
+	st.M = now
 	if watched {
 		st.P = st.D
 	} else {
@@ -502,6 +548,7 @@ func SetSeasonWatched(show Meta, season int, eps []Video, watched bool) {
 
 		st.W = watched
 		st.T = now
+		st.M = now
 		if watched {
 			st.P = st.D
 		} else {
@@ -534,6 +581,68 @@ func SetSeasonWatched(show Meta, season int, eps []Video, watched bool) {
 	hist.touch()
 }
 
+// ── Outbound snapshot ─────────────────────────────────────────────────────────
+
+// LocalLibraryEntry is one title's local watch state, flat enough to be turned
+// into an outbound Stremio library item. The episode chosen is whichever one
+// was touched most recently.
+type LocalLibraryEntry struct {
+	ID       string
+	Name     string
+	Type     string
+	Season   int
+	Episode  int
+	Position float64
+	Duration float64
+	Watched  bool
+	MTime    int64
+}
+
+// LocalLibrary snapshots every title with recorded state for pushing out.
+func LocalLibrary() []LocalLibraryEntry {
+	hist.mu.Lock()
+	defer hist.mu.Unlock()
+	hist.load()
+
+	out := make([]LocalLibraryEntry, 0, len(hist.data.Shows))
+	for id, sh := range hist.data.Shows {
+		var best *epState
+		bestKey := ""
+		for k, e := range sh.Eps {
+			if best == nil || epMTime(e) > epMTime(best) {
+				best, bestKey = e, k
+			}
+		}
+		if best == nil {
+			continue
+		}
+		season, episode := parseEpKey(bestKey)
+		m := epMTime(best)
+		if m == 0 {
+			m = sh.SeenAt
+		}
+		out = append(out, LocalLibraryEntry{
+			ID: id, Name: sh.Name, Type: sh.Type,
+			Season: season, Episode: episode,
+			Position: best.P, Duration: best.D, Watched: best.W,
+			MTime: m,
+		})
+	}
+	return out
+}
+
+// epMTime is an episode's real last-write clock, falling back to the old T for
+// records written before M existed.
+func epMTime(e *epState) int64 {
+	if e == nil {
+		return 0
+	}
+	if e.M != 0 {
+		return e.M
+	}
+	return e.T
+}
+
 // ── History screen ────────────────────────────────────────────────────────────
 
 // LoadHistory renders the recent list as the flat entries the UI expects.
@@ -558,8 +667,8 @@ func (h *historyStore) recentEntries() HistoryList {
 			Name: sh.Name, ID: r.ShowID, Type: sh.Type, Source: sh.Source, Year: sh.Year,
 			Season: r.Season, Episode: r.Episode, VideoID: r.VideoID, EpTitle: r.EpTitle,
 			EpisodeTotal: r.Total, WatchedAt: time.Unix(r.At, 0),
-			NextVideoID:  r.NextVideoID, NextSeason: r.NextSeason,
-			NextEpisode:  r.NextEpisode, NextTitle: r.NextTitle,
+			NextVideoID: r.NextVideoID, NextSeason: r.NextSeason,
+			NextEpisode: r.NextEpisode, NextTitle: r.NextTitle,
 			NextReleased: r.NextRelease,
 		}
 		if st := sh.Eps[epKey(r.Season, r.Episode)]; st != nil {
@@ -936,6 +1045,4 @@ func HistoryStats() Stats {
 	return st
 }
 
-
 // ── Rendering ─────────────────────────────────────────────────────────────────
-

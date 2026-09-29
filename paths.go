@@ -26,11 +26,15 @@ func configDir() string {
 	return filepath.Join(home, ".config", appName)
 }
 
-func cfgFile() string    { return filepath.Join(configDir(), "config.json") }
-func addonsFile() string { return filepath.Join(configDir(), "addons.json") }
-func favsFile() string   { return filepath.Join(configDir(), "favourites.json") }
-func histFile() string   { return filepath.Join(configDir(), "history.json") }
+func cfgFile() string       { return filepath.Join(configDir(), "config.json") }
+func addonsFile() string    { return filepath.Join(configDir(), "addons.json") }
+func favsFile() string      { return filepath.Join(configDir(), "favourites.json") }
+func histFile() string      { return filepath.Join(configDir(), "history.json") }
 func downloadsFile() string { return filepath.Join(configDir(), "downloads.json") }
+
+// accountFile holds the stremio authKey, so it gets the same 0600 treatment as
+// addons.json.
+func accountFile() string { return filepath.Join(configDir(), "account.json") }
 
 func ensureDir() { os.MkdirAll(configDir(), 0700) }
 

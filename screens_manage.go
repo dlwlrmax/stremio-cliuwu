@@ -639,6 +639,73 @@ func (s *settingsScreen) rebuild() {
 		}},
 	}
 
+	// Account rows are appended rather than baked into the literal above:
+	// whether they exist, and what they say, depends on the saved account.
+	ac := LoadAccount()
+	s.rows = append(s.rows,
+		settingRow{head: ""},
+		settingRow{head: "account"},
+	)
+	if ac.AuthKey == "" {
+		s.rows = append(s.rows, settingRow{
+			label: "stremio account",
+			sub:   "sign in to pull your watch history from strem.io",
+			badge: grey("not signed in"),
+			act: func() tea.Cmd {
+				return s.prompt("stremio email", "you@example.com", "", func(email string) tea.Cmd {
+					if email == "" {
+						return nil
+					}
+					return push(newPromptMasked("stremio password", "password", "", func(pw string) tea.Cmd {
+						if pw == "" {
+							return nil
+						}
+						return tea.Batch(toast("signing in…"), stremioLoginCmd(email, pw))
+					}, "sent over https to strem.io — the password is not stored"))
+				}, "your strem.io account email")
+			},
+		})
+	} else {
+		email := ac.Email
+		if email == "" {
+			email = "signed in"
+		}
+		s.rows = append(s.rows,
+			settingRow{
+				label: "stremio account",
+				sub:   "signed in — sync unions remote history into this one",
+				badge: email,
+				act:   func() tea.Cmd { return nil },
+			},
+			settingRow{
+				label: "auto-sync",
+				sub:   "push and pull watch history in the background",
+				badge: onOff(c.AutoSync),
+				act: func() tea.Cmd {
+					ctx.cfg.AutoSync = !ctx.cfg.AutoSync
+					return s.save()
+				},
+			},
+			settingRow{
+				label: "sync now",
+				sub:   "two-way sync · pulls newer remote history, pushes yours",
+				act:   func() tea.Cmd { return tea.Batch(toast("syncing…"), stremioSyncCmd()) },
+			},
+			settingRow{
+				label: "log out",
+				sub:   "forget the saved stremio account",
+				act: func() tea.Cmd {
+					return push(newDestructive("log out", "remove the saved stremio account?", "log out",
+						func() tea.Cmd {
+							ClearAccount()
+							s.rebuild()
+							return toast("signed out")
+						}))
+				},
+			},
+		)
+	}
+
 	items := make([]Item, len(s.rows))
 	for i, r := range s.rows {
 		if r.act == nil {
@@ -654,6 +721,22 @@ func (s *settingsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 	if m, ok := msg.(updateCheckedMsg); ok {
 		s.update = m.Info
 		return s, nil
+	}
+
+	if m, ok := msg.(stremioSyncDoneMsg); ok {
+		s.rebuild()
+		if m.err != nil {
+			// A failed first pull still leaves a usable account behind, so
+			// say so rather than implying the sign-in itself failed.
+			if m.signedIn {
+				return s, toastErr("signed in, but sync failed — " + m.err.Error())
+			}
+			return s, toastErr(m.err.Error())
+		}
+		if m.signedIn {
+			return s, toast(fmt.Sprintf("signed in as %s — pulled %d, pushed %d", m.email, m.pulled, m.pushed))
+		}
+		return s, toast(fmt.Sprintf("stremio: pulled %d, pushed %d", m.pulled, m.pushed))
 	}
 
 	if k, ok := msg.(tea.KeyMsg); ok {

@@ -85,10 +85,21 @@ func newPrompt(title, placeholder, initial string, onDone func(string) tea.Cmd, 
 	return &promptScreen{title: title, ti: ti, onDone: onDone, help: help}
 }
 
-func (s *promptScreen) Init() tea.Cmd   { return s.ti.Focus() }
-func (s *promptScreen) Title() string   { return s.title }
-func (s *promptScreen) Typing() bool    { return true }
-func (s *promptScreen) Footer() string  { return keyHint([2]string{"enter", "confirm"}, [2]string{"esc", "cancel"}) }
+// newPromptMasked is the same prompt for secrets: the characters are echoed as
+// dots so a password isn't left on the screen.
+func newPromptMasked(title, placeholder, initial string, onDone func(string) tea.Cmd, help ...string) *promptScreen {
+	s := newPrompt(title, placeholder, initial, onDone, help...)
+	s.ti.EchoMode = textinput.EchoPassword
+	s.ti.EchoCharacter = '•'
+	return s
+}
+
+func (s *promptScreen) Init() tea.Cmd { return s.ti.Focus() }
+func (s *promptScreen) Title() string { return s.title }
+func (s *promptScreen) Typing() bool  { return true }
+func (s *promptScreen) Footer() string {
+	return keyHint([2]string{"enter", "confirm"}, [2]string{"esc", "cancel"})
+}
 
 func (s *promptScreen) SetSize(w, h int) {
 	s.baseScreen.SetSize(w, h)
@@ -161,8 +172,8 @@ func newChoice(title, message, yesLabel, noLabel string, onYes, onNo func() tea.
 	}
 }
 
-func (s *confirmScreen) Init() tea.Cmd  { return nil }
-func (s *confirmScreen) Title() string  { return s.title }
+func (s *confirmScreen) Init() tea.Cmd { return nil }
+func (s *confirmScreen) Title() string { return s.title }
 func (s *confirmScreen) labels() (string, string) {
 	yes, no := s.yesLabel, s.noLabel
 	if yes == "" {
