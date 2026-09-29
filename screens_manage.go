@@ -549,6 +549,22 @@ func (s *settingsScreen) rebuild() {
 			ctx.cfg.AutoSubtitle = !ctx.cfg.AutoSubtitle
 			return s.save()
 		}},
+		{label: "audio language", sub: "original first, then your order",
+			badge: orDash(c.AudioLang), act: func() tea.Cmd {
+				help := []string{
+					"comma-separated preference order, e.g. jpn,chi,eng",
+					"original (default/untagged track) always wins first",
+					"passed to mpv as --alang, plus auto-pick on each file",
+					"",
+				}
+				help = append(help, LangReference()...)
+
+				return s.prompt("audio language", "jpn,chi,eng", ctx.cfg.AudioLang,
+					func(v string) tea.Cmd {
+						ctx.cfg.AudioLang = v
+						return s.save()
+					}, help...)
+			}},
 		{label: "ask to resume", sub: "off always starts from the beginning", badge: onOff(c.AutoResume), act: func() tea.Cmd {
 			ctx.cfg.AutoResume = !ctx.cfg.AutoResume
 			return s.save()

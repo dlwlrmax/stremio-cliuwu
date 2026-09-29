@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -282,6 +283,9 @@ func (p *Player) spawn() error {
 	if cfg.SubtitleLang != "" {
 		args = append(args, "--slang="+cfg.SubtitleLang)
 	}
+	if cfg.AudioLang != "" {
+		args = append(args, "--alang="+cfg.AudioLang)
+	}
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
@@ -519,6 +523,7 @@ func (p *Player) onFileLoaded() {
 	})
 
 	p.maybeAutoSubtitle()
+	p.maybeAutoAudio()
 
 	p.emit(PlayerStateMsg{State: st})
 }
@@ -614,6 +619,127 @@ func (p *Player) maybeAutoSubtitle() {
 			}
 		}
 	})
+}
+
+// maybeAutoAudio picks the audio track for the file that just loaded.
+//
+// mpv's --alang is only a preference list; it cannot say "whatever track the
+// release tagged as the original", and many rips leave the original dub with
+// no language at all. So the order the user set is applied per file here, by
+// reading mpv's own track-list. Every failure returns silently — a stream
+// without a readable track-list must not break playback.
+//
+// Ranking: original first (a track whose title says so, or a default
+// untagged/und track), then a default track in a language the user didn't
+// list (the original with a foreign tag, e.g. a French film with an English
+// dub), then the user's preferred order, then everything else. Ties break on
+// default, then lowest id.
+func (p *Player) maybeAutoAudio() {
+	p.mu.Lock()
+	order := p.cfg.AudioLang
+	p.mu.Unlock()
+
+	if order == "" {
+		return
+	}
+	prefs := PreferredLangs(order)
+	if len(prefs) == 0 {
+		return
+	}
+
+	// Off the read loop: command() waits for a reply only readLoop can
+	// deliver, so calling it from here in-line would stall every update.
+	p.sendAsync(func() {
+		resp, err := p.command("get_property", "track-list")
+		if err != nil {
+			return
+		}
+		raw, _ := resp["data"].([]any)
+
+		var tracks []audioTrack
+		for _, it := range raw {
+			m, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := m["type"].(string); t != "audio" {
+				continue
+			}
+			id, ok := m["id"].(float64)
+			if !ok {
+				continue
+			}
+			lang, _ := m["lang"].(string)
+			title, _ := m["title"].(string)
+			def, _ := m["default"].(bool)
+			if !def {
+				// mpv versions disagree on the key: "default" vs "is-default".
+				def, _ = m["is-default"].(bool)
+			}
+			tracks = append(tracks, audioTrack{id: int(id), lang: lang, title: title, def: def})
+		}
+
+		// Nothing to choose between.
+		if len(tracks) < 2 {
+			return
+		}
+
+		best := tracks[0]
+		for _, t := range tracks[1:] {
+			if audioBetter(t, best, prefs) {
+				best = t
+			}
+		}
+
+		cur, err := p.command("get_property", "aid")
+		if err != nil {
+			return
+		}
+		if id, _ := cur["data"].(float64); int(id) == best.id {
+			return
+		}
+		p.command("set_property", "aid", best.id)
+	})
+}
+
+type audioTrack struct {
+	id    int
+	lang  string
+	title string
+	def   bool
+}
+
+func audioTier(t audioTrack, prefs []string) int {
+	if strings.Contains(strings.ToLower(t.title), "original") {
+		return 0
+	}
+	untagged := t.lang == "" || strings.EqualFold(t.lang, "und") || strings.EqualFold(t.lang, "unknown")
+	if untagged && t.def {
+		return 0
+	}
+	name := langName(strings.ToLower(t.lang))
+	i := slices.Index(prefs, name)
+	// A default track in a language the user didn't list is the original with
+	// a foreign tag, so it beats the preferred languages.
+	if t.def && i < 0 {
+		return 1
+	}
+	// Otherwise rank by the user's order; unlisted languages come last.
+	if i >= 0 {
+		return 2 + i
+	}
+	return 2 + len(prefs)
+}
+
+// audioBetter reports whether a should be picked over b.
+func audioBetter(a, b audioTrack, prefs []string) bool {
+	if ta, tb := audioTier(a, prefs), audioTier(b, prefs); ta != tb {
+		return ta < tb
+	}
+	if a.def != b.def {
+		return a.def
+	}
+	return a.id < b.id
 }
 
 func (p *Player) onEndFile(reason string) {

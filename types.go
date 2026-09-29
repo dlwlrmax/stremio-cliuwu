@@ -509,13 +509,14 @@ func (q *EpQueue) SeasonEpisodes(season int) []Video {
 // configVersion is bumped whenever a new field needs a non-zero default.
 // Without this, adding a bool to the struct silently gives every existing
 // install `false`, because encoding/json just leaves absent fields alone.
-const configVersion = 14
+const configVersion = 15
 
 type AppConfig struct {
 	Version          int    `json:"version"`
 	MpvPath          string `json:"mpv_path"`
 	PreferredQuality string `json:"preferred_quality"`
 	SubtitleLang     string `json:"subtitle_lang"`
+	AudioLang        string `json:"audio_lang"`
 	AutoSubtitle     bool   `json:"auto_subtitle"`
 	AutoSync         bool   `json:"auto_sync"`
 
@@ -620,6 +621,14 @@ func (c *AppConfig) SetDefaults() bool {
 
 	if c.Version < 14 {
 		c.AutoSync = true // opt out, not in: a signed-in account keeps itself in step
+		changed = true
+	}
+
+	// Original audio always wins first (see Player.maybeAutoAudio); this list
+	// is the fallback order for when no original track can be identified, and
+	// is handed to mpv as --alang.
+	if c.Version < 15 && c.AudioLang == "" {
+		c.AudioLang = "jpn,chi,eng"
 		changed = true
 	}
 
