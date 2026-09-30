@@ -21,8 +21,15 @@ import (
 //
 // The half-block renderer in poster.go is plain text, so Bubble Tea can diff
 // it — but one cell only holds two pixels, which is inherently blurry. On
-// terminals that speak the kitty graphics protocol (kitty, Ghostty, WezTerm)
-// we show the real image instead, through Unicode placeholders:
+// terminals that implement the unicode placeholder part of the kitty
+// graphics protocol we show the real image instead.
+//
+// Only kitty and Ghostty do. WezTerm implements the graphics protocol but
+// not placeholders, so it would take the transmit, render the placeholder
+// cells as nothing, and skip the half-block path — worse than no support
+// at all. Konsole is the same, on the older protocol.
+//
+// It works in two halves:
 //
 //   - The View string holds ordinary text cells: U+10EEEE plus combining
 //     diacritics for row/column and the image id in the foreground colour.
@@ -90,14 +97,14 @@ func kittyDetect() bool {
 		return true
 	}
 	if tp := strings.ToLower(os.Getenv("TERM_PROGRAM")); tp != "" {
-		for _, sub := range []string{"kitty", "ghostty", "wezterm"} {
+		for _, sub := range []string{"kitty", "ghostty"} {
 			if strings.Contains(tp, sub) {
 				return true
 			}
 		}
 	}
 	term := strings.ToLower(os.Getenv("TERM"))
-	for _, sub := range []string{"kitty", "ghostty", "wezterm"} {
+	for _, sub := range []string{"kitty", "ghostty"} {
 		if strings.Contains(term, sub) {
 			return true
 		}
@@ -112,7 +119,7 @@ func kittyDetect() bool {
 	if err != nil {
 		return false
 	}
-	for _, sub := range []string{"kitty", "ghostty", "wezterm"} {
+	for _, sub := range []string{"kitty", "ghostty"} {
 		if strings.Contains(out, sub) {
 			return true
 		}
