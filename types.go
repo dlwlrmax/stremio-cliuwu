@@ -509,7 +509,7 @@ func (q *EpQueue) SeasonEpisodes(season int) []Video {
 // configVersion is bumped whenever a new field needs a non-zero default.
 // Without this, adding a bool to the struct silently gives every existing
 // install `false`, because encoding/json just leaves absent fields alone.
-const configVersion = 12
+const configVersion = 13
 
 type AppConfig struct {
 	Version          int    `json:"version"`
@@ -530,6 +530,9 @@ type AppConfig struct {
 	AutoInfo         bool   `json:"auto_info"`
 	Posters          bool   `json:"posters"`
 	PosterSize       string `json:"poster_size"`
+
+	// auto follows terminal detection, on and off force it either way.
+	KittyMode string `json:"kitty_mode"`
 	DownloadDir      string `json:"download_dir"`
 	DownloadFolders  bool   `json:"download_folders"`
 	MoviePattern     string `json:"movie_pattern"`
@@ -579,6 +582,19 @@ func (c *AppConfig) SetDefaults() bool {
 
 	if c.Version < 7 || c.PosterSize == "" {
 		c.PosterSize = "medium"
+		changed = true
+	}
+
+	// Posters on at xl by default: they were opt-in because half-block art
+	// was rough, and on a kitty terminal it isn't art any more.
+	if c.Version < 13 {
+		c.Posters = true
+		c.PosterSize = "xl"
+		changed = true
+	}
+
+	if c.KittyMode == "" {
+		c.KittyMode = "auto"
 		changed = true
 	}
 
