@@ -624,9 +624,8 @@ func (c *AppConfig) SetDefaults() bool {
 		changed = true
 	}
 
-	// Original audio always wins first (see Player.maybeAutoAudio); this list
-	// is the fallback order for when no original track can be identified, and
-	// is handed to mpv as --alang.
+	// Audio is ranked purely by this preference order (see Player.maybeAutoAudio);
+	// it is also handed to mpv as --alang.
 	if c.Version < 15 && c.AudioLang == "" {
 		c.AudioLang = "jpn,chi,eng"
 		changed = true

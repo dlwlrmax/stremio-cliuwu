@@ -549,11 +549,11 @@ func (s *settingsScreen) rebuild() {
 			ctx.cfg.AutoSubtitle = !ctx.cfg.AutoSubtitle
 			return s.save()
 		}},
-		{label: "audio language", sub: "original first, then your order",
+		{label: "audio language", sub: "your preference order",
 			badge: orDash(c.AudioLang), act: func() tea.Cmd {
 				help := []string{
 					"comma-separated preference order, e.g. jpn,chi,eng",
-					"original (default/untagged track) always wins first",
+					"tracks are ranked purely by this order; unlisted come last",
 					"passed to mpv as --alang, plus auto-pick on each file",
 					"",
 				}

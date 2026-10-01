@@ -629,11 +629,8 @@ func (p *Player) maybeAutoSubtitle() {
 // reading mpv's own track-list. Every failure returns silently — a stream
 // without a readable track-list must not break playback.
 //
-// Ranking: original first (a track whose title says so, or a default
-// untagged/und track), then a default track in a language the user didn't
-// list (the original with a foreign tag, e.g. a French film with an English
-// dub), then the user's preferred order, then everything else. Ties break on
-// default, then lowest id.
+// Ranking: purely the user's preference order; languages not listed come
+// last. Ties break on default, then lowest id.
 func (p *Player) maybeAutoAudio() {
 	p.mu.Lock()
 	order := p.cfg.AudioLang
@@ -710,22 +707,9 @@ type audioTrack struct {
 }
 
 func audioTier(t audioTrack, prefs []string) int {
-	if strings.Contains(strings.ToLower(t.title), "original") {
-		return 0
-	}
-	untagged := t.lang == "" || strings.EqualFold(t.lang, "und") || strings.EqualFold(t.lang, "unknown")
-	if untagged && t.def {
-		return 0
-	}
 	name := langName(strings.ToLower(t.lang))
-	i := slices.Index(prefs, name)
-	// A default track in a language the user didn't list is the original with
-	// a foreign tag, so it beats the preferred languages.
-	if t.def && i < 0 {
-		return 1
-	}
-	// Otherwise rank by the user's order; unlisted languages come last.
-	if i >= 0 {
+	// Rank purely by the user's preference order; unlisted languages come last.
+	if i := slices.Index(prefs, name); i >= 0 {
 		return 2 + i
 	}
 	return 2 + len(prefs)
