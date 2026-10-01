@@ -64,6 +64,18 @@ func posterBudget(size string, paneW, paneH int) (int, int) {
 }
 
 // nextPosterSize cycles through the sizes.
+// kittyModes cycles auto, then the two it chooses between.
+var kittyModes = []string{"auto", "default", "kitty"}
+
+func nextKittyMode(cur string) string {
+	for i, m := range kittyModes {
+		if m == cur {
+			return kittyModes[(i+1)%len(kittyModes)]
+		}
+	}
+	return "auto"
+}
+
 func nextPosterSize(cur string) string {
 	for i, s := range posterSizes {
 		if s == cur {

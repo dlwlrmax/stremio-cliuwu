@@ -66,28 +66,39 @@ func kittyDiacritic(i int) rune {
 
 var (
 	kittyOnce sync.Once
-	kittyOK   bool
-	kittyTmux bool // inside tmux: wrap raw output in DCS passthrough
+	kittyDetected bool // what the environment suggests
+	kittyTmux     bool // inside tmux: wrap raw output in DCS passthrough
 )
 
 // kittySupported reports whether the terminal is expected to speak the kitty
 // graphics protocol. Checked once — the terminal doesn't change mid-run.
 func kittySupported() bool {
+	// Detection runs once — the terminal doesn't change mid-run — but the
+	// answer isn't cached, so flipping the setting takes effect immediately
+	// rather than at the next launch.
 	kittyOnce.Do(func() {
-		// Manual override first: STREMIO_KITTY=1 forces the kitty path
-		// (a capable terminal the environment doesn't describe), =0
-		// forces the half-block fallback.
-		switch os.Getenv("STREMIO_KITTY") {
-		case "1":
-			kittyOK = true
-		case "0":
-			return
-		default:
-			kittyOK = kittyDetect()
-		}
-		kittyTmux = kittyOK && os.Getenv("TMUX") != ""
+		kittyDetected = kittyDetect()
+		kittyTmux = os.Getenv("TMUX") != ""
 	})
-	return kittyOK
+
+	// The environment wins over the setting, so either path can be tested
+	// without editing config.
+	switch os.Getenv("STREMIO_KITTY") {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+
+	if ctx != nil {
+		switch ctx.cfg.KittyMode {
+		case "kitty":
+			return true
+		case "default":
+			return false
+		}
+	}
+	return kittyDetected
 }
 
 // kittyDetect reports whether the terminal around us — directly, or the

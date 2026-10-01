@@ -608,6 +608,13 @@ func (s *settingsScreen) rebuild() {
 			return s.save()
 		}},
 
+		{label: "poster protocol", sub: "how posters are drawn", badge: orDash(c.KittyMode),
+			act: func() tea.Cmd {
+				ctx.cfg.KittyMode = nextKittyMode(ctx.cfg.KittyMode)
+				posterGen++ // redraw through whichever path now applies
+				return s.save()
+			}},
+
 		{head: ""},
 		{head: "downloads"},
 		{label: "download location", sub: "where D on a stream saves to", badge: orDash(c.DownloadDir), act: func() tea.Cmd {
