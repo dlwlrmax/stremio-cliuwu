@@ -272,6 +272,40 @@ func renderPoster(img *image.RGBA, maxW, maxH int) string {
 	return sb.String()
 }
 
+// posterVariants lists the URLs worth trying for a poster, best first for the
+// renderer that asked.
+//
+// metahub serves the same art at /small/, /medium/ and /large/, and the addon
+// hands over whichever it felt like — usually medium. Half-block art can't
+// show the difference, but a kitty terminal can, so ask for the big one and
+// fall back if it isn't there. Anything not from metahub is used as given.
+func posterVariants(url string, biggest bool) []string {
+	const host = "images.metahub.space/poster/"
+
+	i := strings.Index(url, host)
+	if i < 0 {
+		return []string{url}
+	}
+	_ = biggest
+	rest := url[i+len(host):]
+	j := strings.Index(rest, "/")
+	if j < 0 {
+		return []string{url}
+	}
+
+	base, tail := url[:i+len(host)], rest[j:]
+	sizes := []string{"small", "medium", "large"}
+	if biggest {
+		sizes = []string{"large", "medium", "small"}
+	}
+
+	out := make([]string, 0, len(sizes))
+	for _, size := range sizes {
+		out = append(out, base+size+tail)
+	}
+	return out
+}
+
 // posterImg downloads and decodes a poster, cached by URL. Shared by the
 // half-block renderer below and the kitty graphics path in kitty.go.
 func posterImg(url string) (*image.RGBA, bool) {
@@ -308,7 +342,16 @@ func FetchPoster(url string, maxW, maxH int) string {
 		return art
 	}
 
-	img, ok := posterImg(url)
+	// Smallest first: half-blocks downscale to a few dozen cells either way,
+	// so the large file is a few hundred kilobytes spent on detail that can
+	// never reach the screen.
+	var img *image.RGBA
+	var ok bool
+	for _, u := range posterVariants(url, false) {
+		if img, ok = posterImg(u); ok {
+			break
+		}
+	}
 	if !ok {
 		return ""
 	}

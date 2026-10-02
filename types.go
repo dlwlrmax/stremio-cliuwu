@@ -260,6 +260,11 @@ type MetaDetail struct {
 	Status      string `json:"status"`
 	Poster      string `json:"poster"`
 
+	// Sent by cinemeta on films and series alike. Usually the same as ID,
+	// but an addon with its own id scheme carries the mapping here — which
+	// is the only way to reach imdb for a kitsu-backed title.
+	ImdbID string `json:"imdb_id"`
+
 	// Addons disagree on singular vs plural here, so accept both.
 	Genres   []string `json:"genres"`
 	Genre    []string `json:"genre"`
@@ -332,6 +337,11 @@ type Video struct {
 
 	// Set when the series was fetched by its imdb id: the anime addon
 	// answers with real seasons but keeps a kitsu reference on every episode.
+	// Episode still. Shown only on a kitty terminal: at forty cells a 16:9
+	// frame is about eleven half-block rows, which is noise rather than a
+	// picture.
+	Thumbnail string `json:"thumbnail"`
+
 	KitsuID      string `json:"kitsu_id"`
 	KitsuEpisode int    `json:"kitsuEpisode"`
 }
@@ -533,6 +543,10 @@ type AppConfig struct {
 
 	// auto follows terminal detection, on and off force it either way.
 	KittyMode string `json:"kitty_mode"`
+
+	// Off by default: an episode still is a frame from an episode you
+	// haven't watched, which is a spoiler nobody asked for.
+	EpisodeImages bool `json:"episode_images"`
 	DownloadDir      string `json:"download_dir"`
 	DownloadFolders  bool   `json:"download_folders"`
 	MoviePattern     string `json:"movie_pattern"`

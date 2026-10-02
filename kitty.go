@@ -104,16 +104,30 @@ func kittySupported() bool {
 // kittyDetect reports whether the terminal around us — directly, or the
 // outer client when nested in tmux — speaks kitty graphics.
 func kittyDetect() bool {
-	if os.Getenv("KITTY_WINDOW_ID") != "" {
-		return true
-	}
+	// TERM_PROGRAM before KITTY_WINDOW_ID: a terminal launched from kitty
+	// inherits that variable and never clears it, so WezTerm started inside
+	// kitty claims to be kitty. A terminal that names itself is the better
+	// authority than one that merely inherited a variable.
 	if tp := strings.ToLower(os.Getenv("TERM_PROGRAM")); tp != "" {
 		for _, sub := range []string{"kitty", "ghostty"} {
 			if strings.Contains(tp, sub) {
 				return true
 			}
 		}
+		return false
 	}
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		return true
+	}
+
+	// Over SSH the TERM we inherit describes the connection, not the
+	// terminal drawing the screen: a forwarded "xterm-kitty" can sit in
+	// front of a viewer with no graphics support. Distrust name-based
+	// guesses there; STREMIO_KITTY=1 stays the explicit opt-in.
+	if os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != "" {
+		return false
+	}
+
 	term := strings.ToLower(os.Getenv("TERM"))
 	for _, sub := range []string{"kitty", "ghostty"} {
 		if strings.Contains(term, sub) {
@@ -209,8 +223,12 @@ func kittyBlock(id uint32, cols, rows int) string {
 // nothing and touch no cursor state.
 var kittyMu sync.Mutex
 
-// kittyLive tracks transmitted ids so quit can free them.
-var kittyLive = map[uint32]bool{}
+// kittyLive maps a transmitted id to the pixel width it was uploaded at, so
+// quit can free them and a re-placement can tell whether the resident data
+// still suits the new size. The id is a hash of the url alone, so the same
+// poster at two sizes shares one — re-placing without checking would stretch
+// a small upload across a large slot.
+var kittyLive = map[uint32]int{}
 
 func kittyEmit(payload []byte) {
 	kittyMu.Lock()
@@ -260,10 +278,15 @@ func kittyAPC(ctrl string, payload []byte) []byte {
 // kittyTransmit encodes an image to chunked PNG upload escapes. Transmit
 // only (a=t) — it stores the pixels invisibly and draws nothing; the
 // companion kittyPlace binds the stored image to the placeholder cells.
+// kittyPixelWidth is the width an image is uploaded at for a given placement.
+// Pixels, not cells: enough that the terminal's downscale has something to
+// work with, small enough to keep the upload quick.
+func kittyPixelWidth(img *image.RGBA, cols int) int {
+	return min(img.Bounds().Dx(), max(192, min(cols*8, 512)))
+}
+
 func kittyTransmit(img *image.RGBA, id uint32, cols int) []byte {
-	// Pixels, not cells: enough that the terminal's downscale has something
-	// to work with, small enough to keep the upload quick.
-	pxW := min(img.Bounds().Dx(), max(192, min(cols*8, 512)))
+	pxW := kittyPixelWidth(img, cols)
 	pxH := max(1, pxW*img.Bounds().Dy()/max(1, img.Bounds().Dx()))
 	var pngBuf bytes.Buffer
 	if err := png.Encode(&pngBuf, boxScale(img, pxW, pxH)); err != nil {
@@ -343,7 +366,16 @@ func kittyLoadCmd(pid asyncID, url string, maxW, maxH int) tea.Cmd {
 		if url == "" {
 			return fail()
 		}
-		img, ok := posterImg(url)
+		// Largest first. The URL that actually loaded is what gets reported
+		// back, since the resize path looks the image up by it.
+		var img *image.RGBA
+		var ok bool
+		for _, u := range posterVariants(url, true) {
+			if img, ok = posterImg(u); ok {
+				url = u
+				break
+			}
+		}
 		if !ok {
 			return fail()
 		}
@@ -352,9 +384,21 @@ func kittyLoadCmd(pid asyncID, url string, maxW, maxH int) tea.Cmd {
 			return fail()
 		}
 		id := kittyImageID(url)
-		raw := kittyTransmit(img, id, cols)
-		if len(raw) == 0 {
-			return fail()
+
+		px := kittyPixelWidth(img, cols)
+
+		kittyMu.Lock()
+		resident := kittyLive[id] == px
+		kittyMu.Unlock()
+
+		// Already uploaded at this size: only the placement has to be sent,
+		// which is bytes rather than the hundreds of kilobytes an upload
+		// costs. Scrolling an episode list is the case this exists for.
+		var raw []byte
+		if !resident {
+			if raw = kittyTransmit(img, id, cols); len(raw) == 0 {
+				return fail()
+			}
 		}
 		// Transmit first, then bind: the pixels must exist before the
 		// virtual placement references them, and both must complete before
@@ -362,7 +406,7 @@ func kittyLoadCmd(pid asyncID, url string, maxW, maxH int) tea.Cmd {
 		raw = append(raw, kittyPlace(id, cols, rows)...)
 		kittyEmit(raw)
 		kittyMu.Lock()
-		kittyLive[id] = true
+		kittyLive[id] = px
 		kittyMu.Unlock()
 		return kittyPosterMsg{pid: pid, id: id, url: url, cols: cols, rows: rows, ok: true}
 	}
@@ -371,10 +415,11 @@ func kittyLoadCmd(pid asyncID, url string, maxW, maxH int) tea.Cmd {
 // kittyDeleteCmd drops a superseded image without blocking the UI.
 func kittyDeleteCmd(id uint32) tea.Cmd {
 	return func() tea.Msg {
+		// Placement only (d=i) — the pixels stay in the terminal, so the
+		// id stays in kittyLive and coming back needs a placement rather
+		// than another upload. Scrolling an episode list otherwise
+		// re-sends a few hundred kilobytes per keypress.
 		kittyEmit(kittyDelete(id))
-		kittyMu.Lock()
-		delete(kittyLive, id)
-		kittyMu.Unlock()
 		return nil
 	}
 }

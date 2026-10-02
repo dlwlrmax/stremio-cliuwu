@@ -608,6 +608,13 @@ func (s *settingsScreen) rebuild() {
 			return s.save()
 		}},
 
+		{label: "episode images", sub: "stills can spoil the episode",
+			badge: onOff(c.EpisodeImages), act: func() tea.Cmd {
+				ctx.cfg.EpisodeImages = !ctx.cfg.EpisodeImages
+				posterGen++
+				return s.save()
+			}},
+
 		{label: "poster protocol", sub: "how posters are drawn", badge: orDash(c.KittyMode),
 			act: func() tea.Cmd {
 				ctx.cfg.KittyMode = nextKittyMode(ctx.cfg.KittyMode)
