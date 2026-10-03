@@ -330,7 +330,21 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, toastErr(m.err.Error())
 		}
 		was := len(s.metas)
-		s.metas = append(s.metas, m.metas...)
+
+		// Skip anything already in the list. Addons page by an offset they
+		// interpret themselves, and some round it or reorder between
+		// requests, so a page can repeat the item before it.
+		seen := make(map[string]bool, len(s.metas))
+		for _, mt := range s.metas {
+			seen[mt.ID] = true
+		}
+		for _, mt := range m.metas {
+			if mt.ID == "" || seen[mt.ID] {
+				continue
+			}
+			seen[mt.ID] = true
+			s.metas = append(s.metas, mt)
+		}
 		s.hasMore = m.hasMore && len(m.metas) > 0
 		s.loadingMore = false
 		s.rebuild()
@@ -357,7 +371,17 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		if consumed, cmd := s.list.Update(msg); consumed {
 			// Cursor may have moved — refresh the pane for the new row.
-			return s, tea.Batch(cmd, s.syncInfo())
+			cmds := []tea.Cmd{cmd, s.syncInfo()}
+
+			// Reaching the load more row fetches without the keypress. The
+			// row stays where it is, so scrolling past it on the way
+			// somewhere else can't trigger a fetch you didn't want.
+			if ctx.cfg.AutoLoadMore && s.hasMore && !s.loadingMore {
+				if i := s.list.Selected(); i >= 0 && s.moreRow(i) {
+					cmds = append(cmds, s.loadPage(len(s.metas)))
+				}
+			}
+			return s, tea.Batch(cmds...)
 		}
 		switch m.String() {
 		case "i":

@@ -241,9 +241,9 @@ func (p *infoPane) Update(msg tea.Msg) tea.Cmd {
 		// only a changed rectangle needs re-binding to the live image, and
 		// that sends control bytes, not pixels.
 		if p.kittyOn && p.kittyImg != 0 {
-			if img, ok := cachePosterImg.Get(p.kittyURL); ok {
+			if d, ok := cachePosterDims.Get(p.kittyURL); ok {
 				maxW, maxH := posterBudget(ctx.cfg.PosterSize, p.w, p.h)
-				cols, rows := kittyDims(img, maxW, maxH)
+				cols, rows := posterSize(d.W, d.H, maxW, maxH)
 				if cols != p.kittyCols || rows != p.kittyRows {
 					p.kittyCols, p.kittyRows = cols, rows
 					return kittyPlaceCmd(p.kittyImg, cols, rows)

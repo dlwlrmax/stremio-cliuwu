@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -17,7 +18,17 @@ import (
 var (
 	cacheCatalog = newCache[[]Meta](10*time.Minute, 200)
 	cacheSearch  = newCache[[]Meta](5*time.Minute, 100)
-	cacheSeries  = newCache[SeriesMeta](30*time.Minute, 200)
+	// A SeriesMeta carries every episode's overview, so it scales with the
+	// length of the show: a season of something is tens of kilobytes, a
+	// thousand-episode anime is closer to half a megabyte. Bounded by both,
+	// since neither number alone describes the memory.
+	cacheSeries = newSizedCache(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
+		n := len(sm.Name) + len(sm.Poster)
+		for _, v := range sm.Videos {
+			n += len(v.Title) + len(v.Overview) + len(v.ID) + len(v.Thumbnail) + 64
+		}
+		return n
+	})
 )
 
 // ── Discovery ─────────────────────────────────────────────────────────────────
@@ -177,7 +188,41 @@ func FetchCatalog(ref CatalogRef, skip int, genre string) ([]Meta, bool, error) 
 
 // Search fans out across every search-capable catalog and merges the results.
 // Addon order decides precedence when the same title comes back twice.
+// imdbIDRe matches a bare imdb id, or one pasted as an imdb url.
+//
+// Seven digits minimum with no upper bound: imdb pads with leading zeros, so
+// tt0910970 and tt0000000000910970 are the same title, and ids past eight
+// digits are now common. Anchoring rules out a clash with a real search term.
+var imdbIDRe = regexp.MustCompile(`^(?:https?://(?:www\.)?imdb\.com/title/)?(tt\d{7,})/?$`)
+
+// SearchByID fetches a title directly by its imdb id.
+//
+// Catalog search matches on name, so an id finds nothing there. The meta
+// endpoint takes the id instead. It needs a type and the id does not say
+// which, so both are tried and whichever answers is used.
+func SearchByID(addons []Addon, id string) []Meta {
+	for _, t := range []string{"series", "movie"} {
+		d, ok := GetMetaDetail(addons, t, id, "")
+		if !ok || d.Name == "" {
+			continue
+		}
+		src := "movie"
+		if t == "series" {
+			src = "show"
+		}
+		return []Meta{{
+			ID: id, Type: t, Name: d.Name,
+			Year: d.ReleaseInfo, ReleaseInfo: d.ReleaseInfo, Source: src,
+		}}
+	}
+	return nil
+}
+
 func Search(addons []Addon, query string) []Meta {
+	if m := imdbIDRe.FindStringSubmatch(strings.TrimSpace(query)); m != nil {
+		return SearchByID(addons, m[1])
+	}
+
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return nil

@@ -560,6 +560,12 @@ func (s *settingsScreen) rebuild() {
 
 		{head: ""},
 		{head: "library"},
+		{label: "auto load more", sub: "fetch the next page when you reach the end",
+			badge: onOff(c.AutoLoadMore), act: func() tea.Cmd {
+				ctx.cfg.AutoLoadMore = !ctx.cfg.AutoLoadMore
+				return s.save()
+			}},
+
 		{label: "history size", sub: "rows on the history screen · watched state is kept forever",
 			badge: strconv.Itoa(c.HistoryMax), act: func() tea.Cmd {
 			return s.prompt("history size", "300", strconv.Itoa(ctx.cfg.HistoryMax), func(v string) tea.Cmd {
@@ -611,6 +617,13 @@ func (s *settingsScreen) rebuild() {
 		{label: "episode images", sub: "stills can spoil the episode",
 			badge: onOff(c.EpisodeImages), act: func() tea.Cmd {
 				ctx.cfg.EpisodeImages = !ctx.cfg.EpisodeImages
+				posterGen++
+				return s.save()
+			}},
+
+		{label: "poster quality", sub: "kitty only, half-blocks always use small",
+			badge: orDash(c.PosterQuality), act: func() tea.Cmd {
+				ctx.cfg.PosterQuality = nextPosterQuality(ctx.cfg.PosterQuality)
 				posterGen++
 				return s.save()
 			}},

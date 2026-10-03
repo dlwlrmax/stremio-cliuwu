@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"image"
 	"math"
 	"net/http"
@@ -67,6 +69,18 @@ func posterBudget(size string, paneW, paneH int) (int, int) {
 // kittyModes cycles auto, then the two it chooses between.
 var kittyModes = []string{"auto", "default", "kitty"}
 
+// posterQualities are the sizes metahub serves, roughly 41kB, 70kB and 270kB.
+var posterQualities = []string{"small", "medium", "large"}
+
+func nextPosterQuality(cur string) string {
+	for i, q := range posterQualities {
+		if q == cur {
+			return posterQualities[(i+1)%len(posterQualities)]
+		}
+	}
+	return "small"
+}
+
 func nextKittyMode(cur string) string {
 	for i, m := range kittyModes {
 		if m == cur {
@@ -89,8 +103,25 @@ func nextPosterSize(cur string) string {
 var posterGen int
 
 var (
-	cachePosterImg = newCache[*image.RGBA](30*time.Minute, 60)
-	cachePosterArt = newCache[string](30*time.Minute, 120)
+	// Encoded bytes, not decoded pixels. A large poster is 264kB on the
+	// wire and 3.5MB as RGBA, and the decoded form is needed exactly once:
+	// half-blocks keep the rendered string in cachePosterArt, kitty leaves
+	// the pixels in the terminal, and the only later reader wants the
+	// dimensions. Caching decoded images put a 209MB ceiling on a cache
+	// bounded by count rather than bytes.
+	cachePosterBytes = newSizedCache(30*time.Minute, 40, 12<<20,
+		func(b []byte) int { return len(b) })
+
+	// Width and height per url. Small enough to keep a lot of, and enough
+	// to answer both the resize path and the kitty residency check without
+	// decoding anything.
+	cachePosterDims = newCache[posterDims](6*time.Hour, 2000)
+	// Byte-bounded for the same reason as the bytes cache: a rendered
+	// poster is 48kB at medium and 288kB at xxl, since every cell carries
+	// its own truecolor escape. A count of 120 is 6MB or 34MB depending on
+	// a setting the cache knows nothing about.
+	cachePosterArt = newSizedCache(30*time.Minute, 120, 8<<20,
+		func(s string) int { return len(s) })
 )
 
 type posterMsg struct {
@@ -272,6 +303,9 @@ func renderPoster(img *image.RGBA, maxW, maxH int) string {
 	return sb.String()
 }
 
+// posterDims is an image's size in pixels.
+type posterDims struct{ W, H int }
+
 // posterVariants lists the URLs worth trying for a poster, best first for the
 // renderer that asked.
 //
@@ -294,9 +328,21 @@ func posterVariants(url string, biggest bool) []string {
 	}
 
 	base, tail := url[:i+len(host)], rest[j:]
+
 	sizes := []string{"small", "medium", "large"}
 	if biggest {
-		sizes = []string{"large", "medium", "small"}
+		// The configured quality first, then the rest largest-first as
+		// fallbacks in case metahub has nothing at that size.
+		want := "large"
+		if ctx != nil && ctx.cfg.PosterQuality != "" {
+			want = ctx.cfg.PosterQuality
+		}
+		sizes = []string{want}
+		for _, s := range []string{"large", "medium", "small"} {
+			if s != want {
+				sizes = append(sizes, s)
+			}
+		}
 	}
 
 	out := make([]string, 0, len(sizes))
@@ -306,28 +352,35 @@ func posterVariants(url string, biggest bool) []string {
 	return out
 }
 
-// posterImg downloads and decodes a poster, cached by URL. Shared by the
-// half-block renderer below and the kitty graphics path in kitty.go.
+// posterImg fetches and decodes a poster.
+//
+// The decoded image is returned to the caller and not retained — see
+// cachePosterBytes. Repeat calls come out of the byte cache, so the cost is a
+// decode rather than a download.
 func posterImg(url string) (*image.RGBA, bool) {
-	img, ok := cachePosterImg.Get(url)
-	if ok {
-		return img, true
-	}
-	res, err := httpClient.Get(url)
-	if err != nil {
-		return nil, false
-	}
-	defer res.Body.Close()
+	raw, ok := cachePosterBytes.Get(url)
+	if !ok {
+		res, err := httpClient.Get(url)
+		if err != nil {
+			return nil, false
+		}
+		defer res.Body.Close()
 
-	if res.StatusCode != http.StatusOK {
-		return nil, false
+		if res.StatusCode != http.StatusOK {
+			return nil, false
+		}
+		if raw, err = io.ReadAll(io.LimitReader(res.Body, 4<<20)); err != nil {
+			return nil, false
+		}
+		cachePosterBytes.Set(url, raw)
 	}
-	decoded, _, err := image.Decode(res.Body)
+
+	decoded, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, false
 	}
-	img = toRGBA(decoded)
-	cachePosterImg.Set(url, img)
+	img := toRGBA(decoded)
+	cachePosterDims.Set(url, posterDims{W: img.Bounds().Dx(), H: img.Bounds().Dy()})
 	return img, true
 }
 

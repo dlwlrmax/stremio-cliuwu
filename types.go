@@ -376,6 +376,10 @@ type SeriesMeta struct {
 	Poster string  `json:"poster"`
 	Year   string  `json:"releaseInfo"`
 	ImdbID string  `json:"imdb_id"`
+
+	// The show's typical episode length. Cinemeta carries no per-episode
+	// duration, so this is the only figure available.
+	Runtime string `json:"runtime"`
 	Videos []Video `json:"videos"`
 }
 
@@ -544,9 +548,17 @@ type AppConfig struct {
 	// auto follows terminal detection, on and off force it either way.
 	KittyMode string `json:"kitty_mode"`
 
+	// Which poster metahub serves for the kitty path. Half-blocks always
+	// take the small one, since they downscale to a few dozen cells and
+	// cannot show the difference.
+	PosterQuality string `json:"poster_quality"`
+
 	// Off by default: an episode still is a frame from an episode you
 	// haven't watched, which is a spoiler nobody asked for.
 	EpisodeImages bool `json:"episode_images"`
+
+	// Fetch the next page when the cursor reaches the load more row.
+	AutoLoadMore bool `json:"auto_load_more"`
 	DownloadDir      string `json:"download_dir"`
 	DownloadFolders  bool   `json:"download_folders"`
 	MoviePattern     string `json:"movie_pattern"`
@@ -609,6 +621,11 @@ func (c *AppConfig) SetDefaults() bool {
 
 	if c.KittyMode == "" {
 		c.KittyMode = "auto"
+		changed = true
+	}
+
+	if c.PosterQuality == "" {
+		c.PosterQuality = "large"
 		changed = true
 	}
 

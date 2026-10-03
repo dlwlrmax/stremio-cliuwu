@@ -230,6 +230,42 @@ var kittyMu sync.Mutex
 // a small upload across a large slot.
 var kittyLive = map[uint32]int{}
 
+// kittyOrder is the transmit order, oldest first, for eviction.
+var kittyOrder []uint32
+
+// kittyMaxLive caps how many images are left in the terminal.
+//
+// The terminal has its own quota — 320MB in kitty — and evicts on its own
+// when it fills, preferring images with no placement, which is what ours
+// become as soon as you move off them. That would leave kittyLive claiming
+// an image is resident after the pixels are gone, and the placement sent for
+// it would draw nothing.
+//
+// Staying far inside the quota keeps the two in step: at 512 pixels wide an
+// RGBA poster is around 1.5MB, so 32 of them is about 48MB.
+const kittyMaxLive = 32
+
+// kittyRemember records a transmitted image, returning ids evicted to stay
+// under the cap. Caller holds kittyMu and emits the deletes after unlocking.
+func kittyRemember(id uint32, px int) []uint32 {
+	if _, seen := kittyLive[id]; !seen {
+		kittyOrder = append(kittyOrder, id)
+	}
+	kittyLive[id] = px
+
+	var drop []uint32
+	for len(kittyOrder) > kittyMaxLive {
+		old := kittyOrder[0]
+		kittyOrder = kittyOrder[1:]
+		if old == id {
+			continue
+		}
+		delete(kittyLive, old)
+		drop = append(drop, old)
+	}
+	return drop
+}
+
 func kittyEmit(payload []byte) {
 	kittyMu.Lock()
 	defer kittyMu.Unlock()
@@ -281,12 +317,12 @@ func kittyAPC(ctrl string, payload []byte) []byte {
 // kittyPixelWidth is the width an image is uploaded at for a given placement.
 // Pixels, not cells: enough that the terminal's downscale has something to
 // work with, small enough to keep the upload quick.
-func kittyPixelWidth(img *image.RGBA, cols int) int {
-	return min(img.Bounds().Dx(), max(192, min(cols*8, 512)))
+func kittyPixelWidth(srcW, cols int) int {
+	return min(srcW, max(192, min(cols*8, 512)))
 }
 
 func kittyTransmit(img *image.RGBA, id uint32, cols int) []byte {
-	pxW := kittyPixelWidth(img, cols)
+	pxW := kittyPixelWidth(img.Bounds().Dx(), cols)
 	pxH := max(1, pxW*img.Bounds().Dy()/max(1, img.Bounds().Dx()))
 	var pngBuf bytes.Buffer
 	if err := png.Encode(&pngBuf, boxScale(img, pxW, pxH)); err != nil {
@@ -342,6 +378,7 @@ func kittyCleanup() {
 		kittyWriteOne(kittyDeleteData(id))
 		delete(kittyLive, id)
 	}
+	kittyOrder = nil
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -366,8 +403,36 @@ func kittyLoadCmd(pid asyncID, url string, maxW, maxH int) tea.Cmd {
 		if url == "" {
 			return fail()
 		}
+		// A known image that the terminal still holds at the right size
+		// needs no bytes at all — not a download, not a decode, just a
+		// placement. Scrolling back through a list hits this.
+		//
+		// Only the wanted variant qualifies. Checking the fallbacks too
+		// would keep serving the medium one after the quality setting was
+		// raised, because that is what happens to still be resident.
+		if variants := posterVariants(url, true); len(variants) > 0 {
+			u := variants[0]
+			if d, known := cachePosterDims.Get(u); known {
+				if cols, rows := posterSize(d.W, d.H, maxW, maxH); cols > 0 && rows > 0 {
+					id := kittyImageID(u)
+
+					kittyMu.Lock()
+					resident := kittyLive[id] == kittyPixelWidth(d.W, cols)
+					kittyMu.Unlock()
+
+					if resident {
+						kittyEmit(kittyPlace(id, cols, rows))
+						return kittyPosterMsg{
+							pid: pid, id: id, url: u,
+							cols: cols, rows: rows, ok: true,
+						}
+					}
+				}
+			}
+		}
+
 		// Largest first. The URL that actually loaded is what gets reported
-		// back, since the resize path looks the image up by it.
+		// back, since the resize path looks the dimensions up by it.
 		var img *image.RGBA
 		var ok bool
 		for _, u := range posterVariants(url, true) {
@@ -384,30 +449,27 @@ func kittyLoadCmd(pid asyncID, url string, maxW, maxH int) tea.Cmd {
 			return fail()
 		}
 		id := kittyImageID(url)
+		px := kittyPixelWidth(img.Bounds().Dx(), cols)
 
-		px := kittyPixelWidth(img, cols)
-
-		kittyMu.Lock()
-		resident := kittyLive[id] == px
-		kittyMu.Unlock()
-
-		// Already uploaded at this size: only the placement has to be sent,
-		// which is bytes rather than the hundreds of kilobytes an upload
-		// costs. Scrolling an episode list is the case this exists for.
-		var raw []byte
-		if !resident {
-			if raw = kittyTransmit(img, id, cols); len(raw) == 0 {
-				return fail()
-			}
+		raw := kittyTransmit(img, id, cols)
+		if len(raw) == 0 {
+			return fail()
 		}
 		// Transmit first, then bind: the pixels must exist before the
 		// virtual placement references them, and both must complete before
 		// any placeholder cell reaches the View (see kittyPosterMsg).
 		raw = append(raw, kittyPlace(id, cols, rows)...)
 		kittyEmit(raw)
+
 		kittyMu.Lock()
-		kittyLive[id] = px
+		drop := kittyRemember(id, px)
 		kittyMu.Unlock()
+
+		// Data and placements both: an evicted image is one we have stopped
+		// tracking, so leaving its pixels behind is a leak in the terminal.
+		for _, old := range drop {
+			kittyEmit(kittyDeleteData(old))
+		}
 		return kittyPosterMsg{pid: pid, id: id, url: url, cols: cols, rows: rows, ok: true}
 	}
 }
