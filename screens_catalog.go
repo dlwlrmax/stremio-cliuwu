@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -197,6 +198,10 @@ type catalogScreen struct {
 	info        infoPane
 	loaded      bool
 	loadingMore bool
+
+	// prefetching is set while a poster-prefetch goroutine runs, so cursor
+	// moves during it don't pile up further prefetch work.
+	prefetching atomic.Bool
 }
 
 func newCatalogScreen(ref CatalogRef) *catalogScreen {
@@ -224,7 +229,84 @@ func (s *catalogScreen) syncInfo() tea.Cmd {
 	if i < 0 || s.moreRow(i) {
 		return nil // the load-more row has nothing to describe
 	}
-	return s.info.Show(s.metas[i])
+	return tea.Batch(s.info.Show(s.metas[i]), s.prefetchPosters())
+}
+
+// prefetchK is how many rows below the cursor have their meta and poster
+// fetched ahead of time, so arrowing onto the next title renders from cache
+// instead of waiting on a fresh request.
+const prefetchK = 3
+
+// prefetchPosters warms the meta detail, and the poster caches when posters are
+// on, for the next prefetchK rows after the cursor. It follows the list's
+// visible order so a filter is respected, and it is fire-and-forget: the work
+// runs off the render path and never emits a message or touches the pane's
+// displayed state.
+func (s *catalogScreen) prefetchPosters() tea.Cmd {
+	if !s.info.On() || ctx == nil {
+		return nil
+	}
+	var metas []Meta
+	for _, ai := range s.list.ViewAfter(prefetchK) {
+		if s.moreRow(ai) {
+			continue
+		}
+		metas = append(metas, s.metas[ai])
+	}
+	return prefetchCmd(&s.prefetching, ctx.addons, metas,
+		ctx.cfg.PosterSize, s.info.w, s.info.h, kittySupported(), ctx.cfg.Posters)
+}
+
+// prefetchCmd runs warmPosters in one background goroutine, unless a prefetch
+// is already in flight — cursor moves during one are dropped rather than
+// piling up work. The command returns a nil message, so nothing it does ever
+// reaches the update loop.
+func prefetchCmd(flag *atomic.Bool, addons []Addon, metas []Meta, posterSize string, paneW, paneH int, kitty, posters bool) tea.Cmd {
+	if flag == nil || !flag.CompareAndSwap(false, true) {
+		return nil
+	}
+	if len(metas) == 0 {
+		flag.Store(false)
+		return nil
+	}
+	return func() tea.Msg {
+		defer flag.Store(false)
+		warmPosters(addons, metas, posterSize, paneW, paneH, kitty, posters)
+		return nil
+	}
+}
+
+// warmPosters fetches each title's detail in order, nearest first, and warms
+// its poster cache: bytes and dimensions for the kitty placeholder path, or
+// the rendered half-block art otherwise. It deliberately emits nothing.
+func warmPosters(addons []Addon, metas []Meta, posterSize string, paneW, paneH int, kitty, posters bool) {
+	maxW, maxH := posterBudget(posterSize, paneW, paneH)
+	for _, m := range metas {
+		if m.ID == "" {
+			continue
+		}
+		mediaType := m.Type
+		if mediaType == "" {
+			mediaType = "movie"
+		}
+		// negative=false: a prefetch miss must not poison the detail cache.
+		d, ok := fetchMetaDetail(addons, mediaType, m.ID, m.Base, false)
+		if !ok || !posters || d.Poster == "" {
+			continue
+		}
+		if kitty {
+			// Kitty draws the largest variant through placeholders; warming its
+			// bytes and dimensions is what makes a later load cheap. Try the
+			// fallbacks so one missing size doesn't defeat the warm-up.
+			for _, u := range posterVariants(d.Poster, true) {
+				if _, ok := posterImg(u); ok {
+					break
+				}
+			}
+			continue
+		}
+		FetchPoster(d.Poster, maxW, maxH)
+	}
 }
 
 func (s *catalogScreen) Init() tea.Cmd {
@@ -468,6 +550,10 @@ type searchScreen struct {
 	busy   busy
 	info   infoPane
 	loaded bool
+
+	// prefetching is set while a poster-prefetch goroutine runs, so cursor
+	// moves during it don't pile up further prefetch work.
+	prefetching atomic.Bool
 }
 
 func newSearchScreen(query string) *searchScreen {
@@ -499,7 +585,24 @@ func (s *searchScreen) syncInfo() tea.Cmd {
 	if i < 0 || i >= len(s.shown) {
 		return nil
 	}
-	return s.info.Show(s.metas[s.shown[i]])
+	return tea.Batch(s.info.Show(s.metas[s.shown[i]]), s.prefetchPosters())
+}
+
+// prefetchPosters warms the next prefetchK results below the cursor, in the
+// filtered order the list is showing. See catalogScreen.prefetchPosters.
+func (s *searchScreen) prefetchPosters() tea.Cmd {
+	if !s.info.On() || ctx == nil {
+		return nil
+	}
+	var metas []Meta
+	for _, ai := range s.list.ViewAfter(prefetchK) {
+		if ai >= len(s.shown) {
+			continue
+		}
+		metas = append(metas, s.metas[s.shown[ai]])
+	}
+	return prefetchCmd(&s.prefetching, ctx.addons, metas,
+		ctx.cfg.PosterSize, s.info.w, s.info.h, kittySupported(), ctx.cfg.Posters)
 }
 
 func (s *searchScreen) Init() tea.Cmd {

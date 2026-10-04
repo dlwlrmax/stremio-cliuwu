@@ -96,6 +96,24 @@ func (l *listModel) SelectedItem() (Item, bool) {
 	return l.items[i], true
 }
 
+// ViewAfter returns the absolute item indices of up to n selectable rows that
+// follow the cursor in view order, nearest first. It walks the filtered view,
+// so a prefetch follows the list the user actually sees rather than the
+// unfiltered backing slice.
+func (l *listModel) ViewAfter(n int) []int {
+	if n <= 0 || len(l.view) == 0 {
+		return nil
+	}
+	out := make([]int, 0, n)
+	for vi := l.cursor + 1; vi < len(l.view) && len(out) < n; vi++ {
+		if !l.selectableAt(vi) {
+			continue
+		}
+		out = append(out, l.view[vi])
+	}
+	return out
+}
+
 // Focus moves the cursor to an absolute item index.
 func (l *listModel) Focus(abs int) {
 	for vi, ai := range l.view {

@@ -304,14 +304,64 @@ func metaBases(addons []Addon, mediaType, id, hint string) []string {
 
 var cacheMetaDetail = newCache[MetaDetail](30*time.Minute, 300)
 
+// metaFlight dedupes concurrent meta fetches for the same title: the first
+// caller does the request and callers that arrive while it is in flight wait
+// for its result instead of issuing a second one.
+var metaFlight = struct {
+	mu    sync.Mutex
+	calls map[string]*metaFlightCall
+}{calls: map[string]*metaFlightCall{}}
+
+type metaFlightCall struct {
+	wg  sync.WaitGroup
+	val MetaDetail
+	ok  bool
+}
+
 // GetMetaDetail fetches the full meta object for one title, asking whichever
 // addons declare a meta resource for that id.
 func GetMetaDetail(addons []Addon, mediaType, id, hint string) (MetaDetail, bool) {
+	return fetchMetaDetail(addons, mediaType, id, hint, true)
+}
+
+// fetchMetaDetail resolves a meta detail, joining an in-flight request for the
+// same id. negative controls whether a total miss is remembered: prefetch
+// passes false, so a transient failure on a row the user hasn't reached yet
+// isn't cached and doesn't block a real attempt later.
+func fetchMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (MetaDetail, bool) {
 	key := mediaType + ":" + id
 	if v, ok := cacheMetaDetail.Get(key); ok {
 		return v, v.ID != ""
 	}
 
+	metaFlight.mu.Lock()
+	if c, ok := metaFlight.calls[key]; ok {
+		metaFlight.mu.Unlock()
+		c.wg.Wait()
+		return c.val, c.ok
+	}
+	c := &metaFlightCall{}
+	c.wg.Add(1)
+	metaFlight.calls[key] = c
+	metaFlight.mu.Unlock()
+
+	c.val, c.ok = getMetaDetail(addons, mediaType, id, hint, negative)
+
+	// Done before the delete: a caller that finds the entry just before it is
+	// removed joins an already-finished call rather than starting a duplicate.
+	c.wg.Done()
+	metaFlight.mu.Lock()
+	delete(metaFlight.calls, key)
+	metaFlight.mu.Unlock()
+
+	return c.val, c.ok
+}
+
+// getMetaDetail performs the request behind fetchMetaDetail. Successes are
+// cached. On a total miss it stores a negative entry only when negative is
+// true, and never over a positive entry that arrived while it was fetching.
+func getMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (MetaDetail, bool) {
+	key := mediaType + ":" + id
 	for _, base := range metaBases(addons, mediaType, id, hint) {
 		var resp struct {
 			Meta MetaDetail `json:"meta"`
@@ -323,7 +373,12 @@ func GetMetaDetail(addons []Addon, mediaType, id, hint string) (MetaDetail, bool
 		}
 	}
 
-	cacheMetaDetail.Set(key, MetaDetail{}) // negative cache, don't re-ask
+	if v, ok := cacheMetaDetail.Get(key); ok && v.ID != "" {
+		return v, true // a positive result landed while we were fetching
+	}
+	if negative {
+		cacheMetaDetail.Set(key, MetaDetail{}) // negative cache, don't re-ask
+	}
 	return MetaDetail{}, false
 }
 
