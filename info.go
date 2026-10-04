@@ -44,9 +44,9 @@ type infoPane struct {
 	// Kitty graphics state. kittyOn means the pane shows placeholder cells
 	// (see kitty.go) instead of the half-block art above; the pixels live in
 	// the terminal under kittyImg, addressed by URL hash.
-	kittyOn           bool
-	kittyImg          uint32
-	kittyURL          string
+	kittyOn              bool
+	kittyImg             uint32
+	kittyURL             string
 	kittyCols, kittyRows int
 
 	// Episode mode: rendered straight from the season's video list, which
@@ -54,9 +54,9 @@ type infoPane struct {
 	ep     *Video
 	epShow string
 
-	full    bool // taking over the whole screen rather than sitting beside
-	indent  int  // left margin, used when centred
-	offset  int  // first visible line
+	full     bool // taking over the whole screen rather than sitting beside
+	indent   int  // left margin, used when centred
+	offset   int  // first visible line
 	overflow bool // content is taller than the panel
 }
 
@@ -183,15 +183,28 @@ func (p *infoPane) ShowEpisode(show string, v Video) tea.Cmd {
 	p.loaded = true
 	p.offset = 0
 	p.busy.stop()
-	// Episodes show no poster — free the title's image if one is live.
+
+	// The title's image goes whatever happens next: its placeholders left
+	// the screen with the poster.
+	var cmds []tea.Cmd
 	if p.kittyImg != 0 {
-		id := p.kittyImg
-		p.kittyOn, p.kittyImg, p.kittyURL = false, 0, ""
-		p.kittyCols, p.kittyRows = 0, 0
-		return kittyDeleteCmd(id)
+		cmds = append(cmds, kittyDeleteCmd(p.kittyImg))
 	}
-	p.kittyOn = false
-	return nil
+	p.kittyOn, p.kittyImg, p.kittyURL = false, 0, ""
+	p.kittyCols, p.kittyRows = 0, 0
+
+	// Kitty only, and opt-in: a still is a frame from an episode you haven't
+	// watched yet.
+	if ctx.cfg.EpisodeImages && kittySupported() && v.Thumbnail != "" {
+		p.posterID = newAsyncID()
+		maxW, maxH := posterBudget(ctx.cfg.PosterSize, p.w, p.h)
+		cmds = append(cmds, kittyLoadCmd(p.posterID, v.Thumbnail, maxW, maxH))
+	}
+
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func (p *infoPane) Update(msg tea.Msg) tea.Cmd {
@@ -228,9 +241,9 @@ func (p *infoPane) Update(msg tea.Msg) tea.Cmd {
 		// only a changed rectangle needs re-binding to the live image, and
 		// that sends control bytes, not pixels.
 		if p.kittyOn && p.kittyImg != 0 {
-			if img, ok := cachePosterImg.Get(p.kittyURL); ok {
+			if d, ok := cachePosterDims.Get(p.kittyURL); ok {
 				maxW, maxH := posterBudget(ctx.cfg.PosterSize, p.w, p.h)
-				cols, rows := kittyDims(img, maxW, maxH)
+				cols, rows := posterSize(d.W, d.H, maxW, maxH)
 				if cols != p.kittyCols || rows != p.kittyRows {
 					p.kittyCols, p.kittyRows = cols, rows
 					return kittyPlaceCmd(p.kittyImg, cols, rows)
@@ -410,8 +423,6 @@ func (p *infoPane) render() string {
 	return strings.Join(out, "\n")
 }
 
-// posterLink renders the OSC 8 hyperlink to the full-size image, with the
-// label trimmed to whatever the panel width allows.
 // renderEpisode draws the panel for a single episode. Video carries only
 // title, air date and overview — no rating, runtime or cast — so this is
 // deliberately sparser than the title panel.
@@ -421,6 +432,14 @@ func (p *infoPane) renderEpisode() string {
 	lines := func(s string) []string { return strings.Split(s, "\n") }
 
 	var out []string
+
+	// Same placeholder block the poster uses, above the text for the same
+	// reason: it's what the rest of the pane is describing.
+	if p.kittyOn && p.kittyImg != 0 {
+		cols := min(p.kittyCols, p.w)
+		out = append(out, lines(kittyBlock(p.kittyImg, cols, p.kittyRows))...)
+		out = append(out, "")
+	}
 
 	for _, ln := range lines(wrap.Render(fmtEp(v.Season, v.Episode, v.ID))) {
 		out = append(out, stKey.Render(ln))
@@ -465,7 +484,26 @@ func (p *infoPane) renderEpisode() string {
 func (p *infoPane) posterLink() string {
 	// Rendered like the footer hints — a bare dim letter read as a bullet
 	// point rather than a key you're meant to press.
-	return stKey.Render("p") + stHint.Render("=full resolution poster")
+	hint := stKey.Render("p") + stHint.Render("=full resolution poster")
+	if p.imdbID() != "" {
+		hint += stHint.Render("   ") + stKey.Render("I") + stHint.Render("=imdb")
+	}
+	return hint
+}
+
+// imdbID is the title's imdb id, if it has one.
+//
+// Cinemeta sends imdb_id alongside its own id, and for anything it serves the
+// two match. It matters for addons with their own scheme — a kitsu title's id
+// is kitsu:7442, and imdb_id is the only route to a page about it.
+func (p *infoPane) imdbID() string {
+	if id := p.detail.ImdbID; strings.HasPrefix(id, "tt") {
+		return id
+	}
+	if id := p.detail.ID; strings.HasPrefix(id, "tt") {
+		return id
+	}
+	return ""
 }
 
 // field writes a "label: value" block, wrapped as a whole.
@@ -547,11 +585,26 @@ func infoKeys(p *infoPane, w, h int, k tea.KeyMsg) (tea.Cmd, bool) {
 	}
 
 	switch k.String() {
+	case "I":
+		if id := p.imdbID(); id != "" {
+			if err := openURL("https://www.imdb.com/title/" + id + "/"); err != nil {
+				return toastErr("couldn't open: " + err.Error()), true
+			}
+			return toast("opened imdb"), true
+		}
+		return toastErr("no imdb id for this one"), true
+
 	case "p":
 		if p.detail.Poster == "" {
 			return nil, false
 		}
-		if err := openURL(p.detail.Poster); err != nil {
+		// Largest variant: this opens in a browser, where there are no cells
+		// to downscale to and the small file is just a worse picture.
+		poster := p.detail.Poster
+		if v := posterVariants(poster, true); len(v) > 0 {
+			poster = v[0]
+		}
+		if err := openURL(poster); err != nil {
 			return toastErr("couldn't open: " + err.Error()), true
 		}
 		return toast("opening poster…"), true

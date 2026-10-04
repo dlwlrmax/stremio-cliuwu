@@ -326,7 +326,7 @@ const loadMoreThreshold = 10
 // scrolling keeps delivering rows without hunting for the load-more row. The
 // manual row stays as a fallback.
 func (s *catalogScreen) autoLoadMore() tea.Cmd {
-	if !s.hasMore || s.loadingMore || !s.loaded || s.list.Typing() {
+	if !ctx.cfg.AutoLoadMore || !s.hasMore || s.loadingMore || !s.loaded || s.list.Typing() {
 		return nil
 	}
 	i := s.list.Selected()
@@ -348,7 +348,21 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, toastErr(m.err.Error())
 		}
 		was := len(s.metas)
-		s.metas = append(s.metas, m.metas...)
+
+		// Skip anything already in the list. Addons page by an offset they
+		// interpret themselves, and some round it or reorder between
+		// requests, so a page can repeat the item before it.
+		seen := make(map[string]bool, len(s.metas))
+		for _, mt := range s.metas {
+			seen[mt.ID] = true
+		}
+		for _, mt := range m.metas {
+			if mt.ID == "" || seen[mt.ID] {
+				continue
+			}
+			seen[mt.ID] = true
+			s.metas = append(s.metas, mt)
+		}
 		s.hasMore = m.hasMore && len(m.metas) > 0
 		s.loadingMore = false
 		s.rebuild()

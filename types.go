@@ -260,6 +260,11 @@ type MetaDetail struct {
 	Status      string `json:"status"`
 	Poster      string `json:"poster"`
 
+	// Sent by cinemeta on films and series alike. Usually the same as ID,
+	// but an addon with its own id scheme carries the mapping here — which
+	// is the only way to reach imdb for a kitsu-backed title.
+	ImdbID string `json:"imdb_id"`
+
 	// Addons disagree on singular vs plural here, so accept both.
 	Genres   []string `json:"genres"`
 	Genre    []string `json:"genre"`
@@ -332,6 +337,11 @@ type Video struct {
 
 	// Set when the series was fetched by its imdb id: the anime addon
 	// answers with real seasons but keeps a kitsu reference on every episode.
+	// Episode still. Shown only on a kitty terminal: at forty cells a 16:9
+	// frame is about eleven half-block rows, which is noise rather than a
+	// picture.
+	Thumbnail string `json:"thumbnail"`
+
 	KitsuID      string `json:"kitsu_id"`
 	KitsuEpisode int    `json:"kitsuEpisode"`
 }
@@ -361,12 +371,16 @@ func (v Video) StreamID() string {
 }
 
 type SeriesMeta struct {
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Poster string  `json:"poster"`
-	Year   string  `json:"releaseInfo"`
-	ImdbID string  `json:"imdb_id"`
-	Videos []Video `json:"videos"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Poster string `json:"poster"`
+	Year   string `json:"releaseInfo"`
+	ImdbID string `json:"imdb_id"`
+
+	// The show's typical episode length. Cinemeta carries no per-episode
+	// duration, so this is the only figure available.
+	Runtime string  `json:"runtime"`
+	Videos  []Video `json:"videos"`
 }
 
 // SeasonOf finds which season a kitsu entry became once the series was
@@ -522,22 +536,38 @@ type AppConfig struct {
 
 	// Terms that hide a stream from the picker. Substring, case-insensitive,
 	// matched against everything the addon says about it.
-	Blocked         []string `json:"blocked,omitempty"`
-	HistoryMax      int      `json:"history_max"`
-	OmdbKey         string   `json:"omdb_key"`
-	AutoNext        bool     `json:"auto_next"`
-	AutoResume      bool     `json:"auto_resume"`
-	CloseMpvOnExit  bool     `json:"close_mpv_on_exit"`
-	CachedFirst     bool     `json:"cached_first"`
-	Accent          string   `json:"accent"`
-	AutoInfo        bool     `json:"auto_info"`
-	Posters         bool     `json:"posters"`
-	PosterSize      string   `json:"poster_size"`
-	DownloadDir     string   `json:"download_dir"`
-	DownloadFolders bool     `json:"download_folders"`
-	MoviePattern    string   `json:"movie_pattern"`
-	EpisodePattern  string   `json:"episode_pattern"`
-	DateFormat      string   `json:"date_format"`
+	Blocked        []string `json:"blocked,omitempty"`
+	HistoryMax     int      `json:"history_max"`
+	OmdbKey        string   `json:"omdb_key"`
+	AutoNext       bool     `json:"auto_next"`
+	AutoResume     bool     `json:"auto_resume"`
+	CloseMpvOnExit bool     `json:"close_mpv_on_exit"`
+	CachedFirst    bool     `json:"cached_first"`
+	Accent         string   `json:"accent"`
+	AutoInfo       bool     `json:"auto_info"`
+	Posters        bool     `json:"posters"`
+	PosterSize     string   `json:"poster_size"`
+
+	// auto follows terminal detection, on and off force it either way.
+	KittyMode string `json:"kitty_mode"`
+
+	// Which poster metahub serves for the kitty path. Half-blocks always
+	// take the small one, since they downscale to a few dozen cells and
+	// cannot show the difference.
+	PosterQuality string `json:"poster_quality"`
+
+	// Off by default: an episode still is a frame from an episode you
+	// haven't watched, which is a spoiler nobody asked for.
+	EpisodeImages bool `json:"episode_images"`
+
+	// Fetch the next page when the cursor reaches the load more row.
+	AutoLoadMore bool `json:"auto_load_more"`
+
+	DownloadDir     string `json:"download_dir"`
+	DownloadFolders bool   `json:"download_folders"`
+	MoviePattern    string `json:"movie_pattern"`
+	EpisodePattern  string `json:"episode_pattern"`
+	DateFormat      string `json:"date_format"`
 }
 
 // SetDefaults fills in anything missing. Returns true if it changed something,
@@ -582,6 +612,24 @@ func (c *AppConfig) SetDefaults() bool {
 
 	if c.Version < 7 || c.PosterSize == "" {
 		c.PosterSize = "medium"
+		changed = true
+	}
+
+	// Posters on at xl by default: they were opt-in because half-block art
+	// was rough, and on a kitty terminal it isn't art any more.
+	if c.Version < 13 {
+		c.Posters = true
+		c.PosterSize = "xl"
+		changed = true
+	}
+
+	if c.KittyMode == "" {
+		c.KittyMode = "auto"
+		changed = true
+	}
+
+	if c.PosterQuality == "" {
+		c.PosterQuality = "large"
 		changed = true
 	}
 
