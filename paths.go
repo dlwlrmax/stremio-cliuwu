@@ -26,10 +26,14 @@ func configDir() string {
 	return filepath.Join(home, ".config", appName)
 }
 
-func cfgFile() string       { return filepath.Join(configDir(), "config.json") }
-func addonsFile() string    { return filepath.Join(configDir(), "addons.json") }
-func favsFile() string      { return filepath.Join(configDir(), "favourites.json") }
-func histFile() string      { return filepath.Join(configDir(), "history.json") }
+func cfgFile() string    { return filepath.Join(configDir(), "config.json") }
+func addonsFile() string { return filepath.Join(configDir(), "addons.json") }
+func favsFile() string   { return filepath.Join(configDir(), "favourites.json") }
+func histFile() string   { return filepath.Join(configDir(), "history.json") }
+
+// subsPrefsFile holds per-show subtitle preferences, kept beside the global
+// ones rather than inside config.json so clearing it can't touch settings.
+func subsPrefsFile() string { return filepath.Join(configDir(), "sub_prefs.json") }
 func downloadsFile() string { return filepath.Join(configDir(), "downloads.json") }
 
 // accountFile holds the stremio authKey, so it gets the same 0600 treatment as

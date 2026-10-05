@@ -321,7 +321,11 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 		// Global on purpose: you realise you want subtitles a minute into an
 		// episode, by which point the stream list is several screens back.
 		if now := ctx.player.Now(); now != nil {
-			return push(newSubsScreen(now.Label, SubsQueryFrom(now), now.Subs)), true
+			showID := ""
+			if now.MediaType == "series" && now.Queue != nil {
+				showID = now.Entry.ID
+			}
+			return push(newSubsScreen(now.Label, SubsQueryFrom(now), now.Subs, showID)), true
 		}
 	}
 	return nil, false

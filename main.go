@@ -101,6 +101,7 @@ func main() {
 	// First run: no addons.json yet, so seed the two metadata addons. Stream
 	// addons are the user's to add — there's no account to pull them from.
 	refs := LoadAddonRefs()
+	LoadSubPrefs()
 	firstRun := false
 	if len(refs.Items) == 0 {
 		if _, err := os.Stat(addonsFile()); os.IsNotExist(err) {

@@ -25,6 +25,11 @@ type subsScreen struct {
 	shown  []int
 	active string // url of the track currently loaded, for the marker
 
+	// showID is the series this picker belongs to, or "" for a movie/"other".
+	// It's what a manual pick is remembered under.
+	showID  string
+	pending *Subtitle // the track the user just picked, awaiting mpv's word
+
 	list   listModel
 	busy   busy
 	loaded bool
@@ -33,7 +38,7 @@ type subsScreen struct {
 	langIx int
 }
 
-func newSubsScreen(label string, q SubsQuery, shipped []Subtitle) *subsScreen {
+func newSubsScreen(label string, q SubsQuery, shipped []Subtitle, showID string) *subsScreen {
 	l := newList()
 	l.Empty = "no subtitles found"
 	l.Numbered = true
@@ -46,7 +51,8 @@ func newSubsScreen(label string, q SubsQuery, shipped []Subtitle) *subsScreen {
 
 	return &subsScreen{
 		id: newAsyncID(), query: q, label: label, subs: shipped, list: l,
-		busy: newBusy("looking for subtitles…"),
+		showID: showID,
+		busy:   newBusy("looking for subtitles…"),
 	}
 }
 
@@ -78,6 +84,9 @@ func (s *subsScreen) Footer() string {
 	if len(s.langs) > 2 {
 		pairs = append(pairs, [2]string{"tab", "language"})
 	}
+	if s.showID != "" {
+		pairs = append(pairs, [2]string{"c", "use global"})
+	}
 	pairs = append(pairs, [2]string{"R", "refetch"}, [2]string{"/", "filter"},
 		[2]string{"b/esc", "back"})
 	return withStatus(s.list.Status(), keyHint(pairs...))
@@ -100,14 +109,24 @@ func (s *subsScreen) collectLangs() {
 
 	// Land on the first of your preferred languages that actually came back.
 	// The setting is a list, so "eng, en, English" means try each in turn.
+	// A show-level preference wins over that: the picker opens where this show
+	// was last set, so the common case needs no scrolling.
 	s.langIx = 0
-	if sub := PickPreferred(s.subs, PreferredLangs(ctx.cfg.SubtitleLang)); sub != nil {
-		want := langName(sub.Lang)
-		for i, l := range s.langs {
-			if i > 0 && l == want {
-				s.langIx = i
-				break
-			}
+	want := ""
+	if s.showID != "" {
+		if p, ok := GetSubPref(s.showID); ok {
+			want = p.Lang
+		}
+	}
+	if want == "" {
+		if sub := PickPreferred(s.subs, PreferredLangs(ctx.cfg.SubtitleLang)); sub != nil {
+			want = langName(sub.Lang)
+		}
+	}
+	for i, l := range s.langs {
+		if i > 0 && l == want {
+			s.langIx = i
+			break
 		}
 	}
 }
@@ -209,6 +228,16 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		if m.Err != nil {
 			return s, toastErr("mpv couldn't load that one — try another")
 		}
+		// Remember only a track the user picked by hand. The autoloader emits
+		// this message too, and its pick isn't a preference.
+		if s.pending != nil && m.URL == s.pending.URL {
+			src := "plugin"
+			if s.pending.Addon == "stream" {
+				src = "embedded"
+			}
+			SetSubPref(s.showID, langName(s.pending.Lang), src)
+			s.pending = nil
+		}
 		cur := s.list.Selected()
 		s.active = m.URL
 		s.rebuild()
@@ -229,6 +258,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 			s.list.ClearNum()
 			sub := s.subs[s.shown[i]]
+			s.pending = &sub
 
 			// Stays open. The first pick often has the wrong timing, and
 			// closing the list each time meant reopening it from scratch to
@@ -252,6 +282,14 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if len(s.langs) > 1 {
 				s.langIx = (s.langIx - 1 + len(s.langs)) % len(s.langs)
 				s.rebuild()
+			}
+		case "c":
+			// Back to the global default for this show. Only meaningful when
+			// a per-show preference could exist in the first place.
+			if s.showID != "" {
+				DeleteSubPref(s.showID)
+				s.pending = nil
+				return s, toast("subtitle preference cleared — using global")
 			}
 		case "esc", "backspace":
 			return s, pop()

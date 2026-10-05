@@ -540,9 +540,20 @@ func (p *Player) maybeAutoSubtitle() {
 	p.mu.Lock()
 	now, cfg := p.now, p.cfg
 	gen := p.playGen
+
+	// A per-show preference is explicit intent, so it applies even when
+	// autoloading is off. It only exists for a series with a queue; movies
+	// and "other" always take the global path below.
+	var pref ShowSubPref
+	hasPref := false
+	if now != nil && now.MediaType == "series" && now.Queue != nil {
+		pref, hasPref = GetSubPref(now.Entry.ID)
+	}
+
 	// "other" is a debrid library / local file: there is no episode id worth
 	// asking a subtitle addon about, so skip it entirely.
-	skip := now == nil || !cfg.AutoSubtitle || p.autoSubbed || now.MediaType == "other"
+	skip := now == nil || p.autoSubbed || now.MediaType == "other" ||
+		(!hasPref && !cfg.AutoSubtitle)
 	if !skip {
 		p.autoSubbed = true
 	}
@@ -553,7 +564,7 @@ func (p *Player) maybeAutoSubtitle() {
 	}
 
 	prefs := PreferredLangs(cfg.SubtitleLang)
-	if len(prefs) == 0 {
+	if len(prefs) == 0 && !hasPref {
 		return
 	}
 
@@ -564,12 +575,14 @@ func (p *Player) maybeAutoSubtitle() {
 	req := *now
 	req.Subs = slices.Clone(now.Subs)
 
-	// A shipped track in the top-preference language is already timed to this
-	// exact file and will play via mpv's --slang, so there is nothing worth
-	// fetching. A shipped track in a lower-preference language is not enough:
-	// the user still wants a plugin track for the top one.
-	if PickPreferred(req.Subs, prefs[:1]) != nil {
-		return
+	if !hasPref {
+		// A shipped track in the top-preference language is already timed to
+		// this exact file and will play via mpv's --slang, so there is nothing
+		// worth fetching. A shipped track in a lower-preference language is not
+		// enough: the user still wants a plugin track for the top one.
+		if PickPreferred(req.Subs, prefs[:1]) != nil {
+			return
+		}
 	}
 
 	// Snapshot the addon list: LoadAddons replaces it wholesale, and this
@@ -587,38 +600,175 @@ func (p *Player) maybeAutoSubtitle() {
 			return
 		}
 
+		shipped := make(map[string]bool, len(req.Subs))
+		for _, s := range req.Subs {
+			shipped[s.URL] = true
+		}
+
+		if hasPref {
+			// With autoload off, the show's own language is all we honour:
+			// falling back to the global list would be autoloading by another
+			// name.
+			fallback := prefs
+			if !cfg.AutoSubtitle {
+				fallback = nil
+			}
+			p.autoSubtitleForShow(&req, subs, shipped, pref, fallback)
+			return
+		}
+
 		// Try each language in preference order. A shipped track in one of
 		// them wins that tier outright — mpv's --slang plays it, so add
 		// nothing. Otherwise the plugin tracks for that language are tried in
 		// merged order (a dead link fails inside mpv, so move on to the next).
 		// A lower tier is only reached when neither source has the language.
-		shipped := make(map[string]bool, len(req.Subs))
-		for _, s := range req.Subs {
-			shipped[s.URL] = true
-		}
-		for _, pref := range prefs {
-			if PickPreferred(req.Subs, []string{pref}) != nil {
+		for _, prefLang := range prefs {
+			if PickPreferred(req.Subs, []string{prefLang}) != nil {
 				return
 			}
 			for i := range subs {
 				s := subs[i]
-				if shipped[s.URL] || langName(s.Lang) != pref {
+				if shipped[s.URL] || langName(s.Lang) != prefLang {
 					continue
 				}
-				msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
-				if msg.Err != nil {
-					continue
+				if p.addSubtitle(s) {
+					return
 				}
-				notice := "subtitles: " + langName(s.Lang) + " · " + s.Label()
-				if s.Addon != "" {
-					notice += " via " + s.Addon
-				}
-				p.emit(PlayerNoticeMsg{Text: notice})
-				p.emit(msg)
-				return
 			}
 		}
 	})
+}
+
+// autoSubtitleForShow applies a per-show preference: the language the user last
+// chose for this show, preferring the source they chose it from.
+//
+// Tiers are the show language first, then the global preference list. The show
+// tier tries its recorded source first and the other second; a language absent
+// from both sources falls through to the normal per-tier handling for the
+// remaining languages.
+func (p *Player) autoSubtitleForShow(req *PlayRequest, subs []Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
+	lang := pref.Lang
+
+	tiers := []string{lang}
+	for _, l := range fallback {
+		if l != lang {
+			tiers = append(tiers, l)
+		}
+	}
+
+	for i, tier := range tiers {
+		if i == 0 {
+			if p.loadShowTier(req, subs, shipped, tier, pref.Src) {
+				return
+			}
+			continue
+		}
+		if PickPreferred(req.Subs, []string{tier}) != nil {
+			return
+		}
+		for j := range subs {
+			s := subs[j]
+			if shipped[s.URL] || langName(s.Lang) != tier {
+				continue
+			}
+			if p.addSubtitle(s) {
+				return
+			}
+		}
+	}
+}
+
+// loadShowTier loads the show's own language, trying the source the user picked
+// first and the other one after. A dead link fails inside mpv, so each
+// candidate is tried in turn.
+func (p *Player) loadShowTier(req *PlayRequest, subs []Subtitle, shipped map[string]bool, lang, src string) bool {
+	embedded := func() bool {
+		// The track the user means by "embedded" is usually already in the
+		// file, and --slang is global, so a show language ranked low there
+		// wouldn't be selected on its own. Set sid explicitly.
+		if p.selectEmbeddedSub(lang) {
+			return true
+		}
+		// Otherwise a subtitle shipped with the stream is the next best
+		// embedded candidate; it's an external URL, loaded like a plugin one.
+		for i := range req.Subs {
+			s := req.Subs[i]
+			if langName(s.Lang) != lang {
+				continue
+			}
+			if p.addSubtitle(s) {
+				return true
+			}
+		}
+		return false
+	}
+	plugin := func() bool {
+		for i := range subs {
+			s := subs[i]
+			if shipped[s.URL] || langName(s.Lang) != lang {
+				continue
+			}
+			if p.addSubtitle(s) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if src == "embedded" {
+		return embedded() || plugin()
+	}
+	return plugin() || embedded()
+}
+
+// selectEmbeddedSub picks the subtitle track already inside the file whose
+// language matches, by setting mpv's sid directly. Mirrors maybeAutoAudio's
+// track-list walk; any failure is silent so playback is never broken.
+func (p *Player) selectEmbeddedSub(lang string) bool {
+	resp, err := p.command("get_property", "track-list")
+	if err != nil {
+		return false
+	}
+	raw, _ := resp["data"].([]any)
+	for _, it := range raw {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := m["type"].(string); t != "sub" {
+			continue
+		}
+		l, _ := m["lang"].(string)
+		if langName(l) != lang {
+			continue
+		}
+		id, ok := m["id"].(float64)
+		if !ok {
+			continue
+		}
+		if _, err := p.command("set_property", "sid", int(id)); err != nil {
+			return false
+		}
+		p.emit(PlayerNoticeMsg{Text: "subtitles: " + lang + " · embedded"})
+		return true
+	}
+	return false
+}
+
+// addSubtitle loads a track and, on success, announces it. Shared by the
+// global and per-show autoloaders.
+func (p *Player) addSubtitle(s Subtitle) bool {
+	msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
+	if msg.Err != nil {
+		return false
+	}
+	notice := "subtitles: " + langName(s.Lang) + " · " + s.Label()
+	if s.Addon != "" {
+		notice += " via " + s.Addon
+	}
+	p.emit(PlayerNoticeMsg{Text: notice})
+	p.emit(msg)
+	return true
 }
 
 // maybeAutoAudio picks the audio track for the file that just loaded.
