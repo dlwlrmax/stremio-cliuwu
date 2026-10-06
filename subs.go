@@ -88,10 +88,27 @@ func subsCacheKey(q SubsQuery) string {
 	return q.MediaType + ":" + q.VideoID + ":" + q.Hash + ":" + q.Filename
 }
 
+// subsFullKey maps a query's base cache key to the full key it was stored
+// under when the request asked for more than one lookup id. GetSubtitles
+// derives those ids from the addons, which dropSubsCache doesn't have, so
+// without this the refetch keybinding would miss an entry stored for a
+// resolved imdb id and appear to do nothing.
+var (
+	subsFullKeyMu sync.Mutex
+	subsFullKey   = map[string]string{}
+)
+
 // dropSubsCache forgets a hit and a miss for q, so the next request goes back
 // out to the addons.
 func dropSubsCache(q SubsQuery) {
-	key := subsCacheKey(q)
+	base := subsCacheKey(q)
+	subsFullKeyMu.Lock()
+	key, ok := subsFullKey[base]
+	delete(subsFullKey, base)
+	subsFullKeyMu.Unlock()
+	if !ok {
+		key = base
+	}
 	cacheSubs.Delete(key)
 	cacheSubsMiss.Delete(key)
 }
@@ -151,43 +168,104 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 	if videoID == "" {
 		return nil
 	}
-	key := subsCacheKey(q)
+	if mediaType == "" {
+		mediaType = "movie"
+	}
+
+	// Lookup ids worth asking about. The catalog routinely hands us an
+	// addon's own id — tmdb:94329 — but the subtitle addons people install
+	// declare idPrefixes of "tt" and can't resolve it. Meta carries the imdb
+	// mapping, so ask for both and let each addon's idPrefixes decide which
+	// it is willing to serve. An id already in imdb form needs no lookup.
+	ids := []string{videoID}
+	if !strings.HasPrefix(videoID, "tt") {
+		if d, ok := GetMetaDetail(addons, mediaType, videoID, ""); ok {
+			if id := d.ImdbID; strings.HasPrefix(id, "tt") && id != videoID {
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	// The resolved ids belong in the key: an addon that cached a miss for
+	// tmdb:94329 must not shield the answer we get for its imdb id. The
+	// single-id case keeps the plain key so the common path is unchanged.
+	base := subsCacheKey(q)
+	key := base
+	if len(ids) > 1 {
+		key = base + "|" + strings.Join(ids[1:], ",")
+		subsFullKeyMu.Lock()
+		subsFullKey[base] = key
+		subsFullKeyMu.Unlock()
+	}
 	if v, ok := cacheSubs.Get(key); ok {
 		return v
 	}
 	if v, ok := cacheSubsMiss.Get(key); ok {
 		return v
 	}
-	if mediaType == "" {
-		mediaType = "movie"
+
+	// Union of addons that can serve any candidate id, in configured order,
+	// so Rank stays the addon's position in your list rather than an
+	// artefact of which id resolved first.
+	var usable []Addon
+	var ranks []int
+	for i, a := range addons {
+		if a.Err != nil {
+			continue
+		}
+		for _, id := range ids {
+			if a.SupportsResource("subtitles", mediaType, id) {
+				usable = append(usable, a)
+				ranks = append(ranks, i)
+				break
+			}
+		}
 	}
 
-	usable := SubtitleAddons(addons, mediaType, videoID)
-	results := make([][]Subtitle, len(usable))
+	// One query per (candidate id, addon willing to serve it). An addon with
+	// an "tt" prefix is asked for the imdb id and skipped for tmdb:, and
+	// vice versa for anything that happens to take tmdb directly.
+	type subsJob struct {
+		addon Addon
+		rank  int
+		paths []string
+	}
+	var jobs []subsJob
+	for _, id := range ids {
+		qc := q
+		qc.VideoID = id
+		paths := qc.paths()
+		for k, a := range usable {
+			if a.SupportsResource("subtitles", mediaType, id) {
+				jobs = append(jobs, subsJob{addon: a, rank: ranks[k], paths: paths})
+			}
+		}
+	}
+
+	results := make([][]Subtitle, len(jobs))
 
 	var wg sync.WaitGroup
-	for i, a := range usable {
+	for ji, job := range jobs {
 		wg.Add(1)
-		go func(i int, a Addon) {
+		go func(ji int, job subsJob) {
 			defer wg.Done()
 
-			base := strings.TrimSuffix(a.TransportURL, "/manifest.json")
+			root := strings.TrimSuffix(job.addon.TransportURL, "/manifest.json")
 
 			// Both forms are asked at once. The hash form can return nothing
 			// when the addon doesn't recognise the hash, and the plain form
 			// still returns title matches — waiting for one before starting
 			// the other just doubles the slowest addon's latency.
-			paths := q.paths()
-			sets := make([][]Subtitle, len(paths))
+			sets := make([][]Subtitle, len(job.paths))
 			var pw sync.WaitGroup
-			for pi, path := range paths {
+			for pi, path := range job.paths {
 				pw.Add(1)
 				go func(pi int, path string) {
 					defer pw.Done()
 					var resp struct {
 						Subtitles []Subtitle `json:"subtitles"`
 					}
-					if getJSON(base+path, &resp) != nil {
+					if getJSON(root+path, &resp) != nil {
 						return
 					}
 					sets[pi] = resp.Subtitles
@@ -201,11 +279,11 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 				found = append(found, set...)
 			}
 			for j := range found {
-				found[j].Addon = a.Manifest.Name
-				found[j].Rank = i
+				found[j].Addon = job.addon.Manifest.Name
+				found[j].Rank = job.rank
 			}
-			results[i] = found
-		}(i, a)
+			results[ji] = found
+		}(ji, job)
 	}
 	wg.Wait()
 
