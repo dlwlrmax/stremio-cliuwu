@@ -1,11 +1,37 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 )
+
+// FlexString accepts a JSON string or a bare number. Addons are loose about
+// types — Cinemeta sends imdbRating as "7.5" but some send 7.5 — and a strict
+// `string` field makes the whole meta decode fail, which is why a numeric
+// rating used to drop the title detail entirely.
+type FlexString string
+
+func (s *FlexString) UnmarshalJSON(b []byte) error {
+	t := strings.TrimSpace(string(b))
+	if t == "" || t == "null" {
+		*s = ""
+		return nil
+	}
+	if len(t) > 1 && t[0] == '"' && t[len(t)-1] == '"' {
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return err
+		}
+		*s = FlexString(str)
+		return nil
+	}
+	// number / bool / other scalar — keep the literal text.
+	*s = FlexString(t)
+	return nil
+}
 
 // ── List rendering ────────────────────────────────────────────────────────────
 
@@ -251,14 +277,14 @@ type MetaDetail struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 
-	ReleaseInfo string `json:"releaseInfo"`
-	Released    string `json:"released"`
-	Runtime     string `json:"runtime"`
-	ImdbRating  string `json:"imdbRating"`
-	Country     string `json:"country"`
-	Awards      string `json:"awards"`
-	Status      string `json:"status"`
-	Poster      string `json:"poster"`
+	ReleaseInfo string     `json:"releaseInfo"`
+	Released    string     `json:"released"`
+	Runtime     FlexString `json:"runtime"`
+	ImdbRating  FlexString `json:"imdbRating"`
+	Country     string     `json:"country"`
+	Awards      string     `json:"awards"`
+	Status      string     `json:"status"`
+	Poster      string     `json:"poster"`
 
 	// Sent by cinemeta on films and series alike. Usually the same as ID,
 	// but an addon with its own id scheme carries the mapping here — which
@@ -328,6 +354,10 @@ type Video struct {
 	Released string `json:"released"`
 	Overview string `json:"overview"`
 
+	// Cinemeta carries a per-episode rating on series videos; some addons send
+	// it as a string, some as a number.
+	Rating FlexString `json:"rating"`
+
 	// Addons disagree on these. Kitsu sends title/overview; Cinemeta and the
 	// imdb-keyed metas send name/description, leaving the other pair null —
 	// which is why regrouped anime and Cinemeta specials came out as bare
@@ -379,8 +409,8 @@ type SeriesMeta struct {
 
 	// The show's typical episode length. Cinemeta carries no per-episode
 	// duration, so this is the only figure available.
-	Runtime string  `json:"runtime"`
-	Videos  []Video `json:"videos"`
+	Runtime FlexString `json:"runtime"`
+	Videos  []Video    `json:"videos"`
 }
 
 // SeasonOf finds which season a kitsu entry became once the series was

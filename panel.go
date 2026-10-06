@@ -45,9 +45,9 @@ type continuePanel struct {
 	downloads []Download
 	watched   []HistoryEntry
 	next      *ContinueItem // what w resumes
-	epVideo   Video      // episode record, for a series
-	epMovie   MetaDetail // meta, for a film
-	epKey     string     // which target the two above belong to
+	epVideo   Video         // episode record, for a series
+	epMovie   MetaDetail    // meta, for a film
+	epKey     string        // which target the two above belong to
 	stats     Stats
 
 	// actions is the flat numbered list across all sections, so 1-9 means one
@@ -375,10 +375,10 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 			facts = append(facts, e.Year)
 		}
 		if d.Runtime != "" {
-			facts = append(facts, d.Runtime)
+			facts = append(facts, string(d.Runtime))
 		}
 		if d.ImdbRating != "" && d.ImdbRating != "N/A" {
-			facts = append(facts, "★ "+d.ImdbRating)
+			facts = append(facts, "★ "+string(d.ImdbRating))
 		}
 		if len(facts) > 0 {
 			out = append(out, stKey.Render(strings.Join(facts, "  ·  ")))

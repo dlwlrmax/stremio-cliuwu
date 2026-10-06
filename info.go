@@ -384,10 +384,10 @@ func (p *infoPane) render() string {
 		facts = append(facts, d.ReleaseInfo)
 	}
 	if d.Runtime != "" {
-		facts = append(facts, d.Runtime)
+		facts = append(facts, string(d.Runtime))
 	}
 	if d.ImdbRating != "" && d.ImdbRating != "N/A" {
-		facts = append(facts, "★ "+d.ImdbRating)
+		facts = append(facts, "★ "+string(d.ImdbRating))
 	}
 	if len(facts) > 0 {
 		head = append(head, stKey.Render(strings.Join(facts, "  ·  ")))
@@ -423,9 +423,9 @@ func (p *infoPane) render() string {
 	return strings.Join(out, "\n")
 }
 
-// renderEpisode draws the panel for a single episode. Video carries only
-// title, air date and overview — no rating, runtime or cast — so this is
-// deliberately sparser than the title panel.
+// renderEpisode draws the panel for a single episode. Video carries title,
+// air date, rating and overview — no runtime or cast — so this is deliberately
+// sparser than the title panel.
 func (p *infoPane) renderEpisode() string {
 	v := *p.ep
 	wrap := lipgloss.NewStyle().Width(p.w)
@@ -463,6 +463,10 @@ func (p *infoPane) renderEpisode() string {
 			}
 			out = append(out, stWarn.Render(line))
 		}
+	}
+
+	if v.Rating != "" && v.Rating != "N/A" {
+		out = append(out, stSub.Render("★ "+string(v.Rating)))
 	}
 
 	if v.Overview != "" {
