@@ -237,7 +237,18 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 			SetSubPref(s.showID, langName(s.pending.Lang), src)
 			s.pending = nil
+
+			// A hand pick is the end of the errand: close the list and get
+			// back to the video. If playback was paused while the picker was
+			// open, picking subtitles shouldn't leave it stuck that way.
+			cmds := []tea.Cmd{toast("subtitles on — " + m.Title), pop()}
+			if ctx.player.State().Paused {
+				cmds = append(cmds, ctx.player.Resume())
+			}
+			return s, tea.Batch(cmds...)
 		}
+
+		// The autoloader's pick, not a preference — mark it and stay put.
 		cur := s.list.Selected()
 		s.active = m.URL
 		s.rebuild()
@@ -260,9 +271,10 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			sub := s.subs[s.shown[i]]
 			s.pending = &sub
 
-			// Stays open. The first pick often has the wrong timing, and
-			// closing the list each time meant reopening it from scratch to
-			// try the next one. The ✓ waits for mpv to confirm.
+			// Stays open until mpv confirms. The first pick often has the
+			// wrong timing, so if it fails you're still on the list to try
+			// the next one. A pick that takes closes the screen (see
+			// SubtitleAddedMsg below).
 			return s, tea.Batch(
 				ctx.player.AddSubtitle(sub.URL, langName(sub.Lang), sub.Lang),
 				toast("loading "+langName(sub.Lang)+" subtitles…"),

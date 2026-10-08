@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -11,6 +12,19 @@ type streamsMsg struct {
 	id      asyncID
 	streams []Stream
 }
+
+// streamsRetryMsg fires after the auto-retry delay for an empty result. It
+// carries the fetch it belongs to so a stale tick can be dropped, and the
+// attempt number so retries stop at streamRetryMax.
+type streamsRetryMsg struct {
+	id      asyncID
+	attempt int
+}
+
+const (
+	streamRetryMax   = 3
+	streamRetryDelay = 5 * time.Second
+)
 
 // streamTarget is everything needed to fetch streams for one playable thing.
 type streamTarget struct {
@@ -47,6 +61,10 @@ type streamScreen struct {
 	busy    busy
 	loaded  bool
 	reverse bool
+
+	// Auto-retry attempts already made for the current fetch. Reset by a
+	// manual refetch; a fresh screen starts at zero.
+	retries int
 }
 
 // newStreamScreenFiltered starts with a filter already applied.
@@ -284,6 +302,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 		Queue:     &nq,
 	}
 	s.streams = nil
+	s.retries = 0
 	s.list.SetItems(nil)
 	return s.load()
 }
@@ -478,7 +497,28 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			s.list.SetQuery(s.filter)
 			s.filter = ""
 		}
+
+		// Empty can mean an addon was briefly down rather than there being
+		// nothing to play, so nudge the addons again a few times before
+		// settling on the empty state.
+		if len(s.streams) == 0 && s.retries < streamRetryMax {
+			s.retries++
+			id, n := s.id, s.retries
+			return s, tea.Tick(streamRetryDelay, func(time.Time) tea.Msg {
+				return streamsRetryMsg{id: id, attempt: n}
+			})
+		}
 		return s, nil
+
+	case streamsRetryMsg:
+		if m.id != s.id || len(s.streams) > 0 || m.attempt > streamRetryMax {
+			return s, nil
+		}
+		s.retries = m.attempt
+		return s, tea.Batch(
+			s.reload(),
+			toast(fmt.Sprintf("retrying streams… (%d/%d)", m.attempt, streamRetryMax)),
+		)
 
 	case tea.KeyMsg:
 		if consumed, cmd := s.list.Update(msg); consumed {
@@ -524,6 +564,7 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, s.download(s.streams[s.shown[i]])
 			}
 		case "R":
+			s.retries = 0
 			return s, tea.Batch(s.reload(), toast("refetching streams…"))
 		case "r":
 			for i, j := 0, len(s.streams)-1; i < j; i, j = i+1, j-1 {

@@ -1035,6 +1035,17 @@ func (p *Player) Stop() tea.Cmd {
 	}
 }
 
+// Resume un-pauses a paused file, so closing the subtitle picker doesn't
+// leave mpv sitting there. Same property the file-loaded handler sets.
+func (p *Player) Resume() tea.Cmd {
+	return func() tea.Msg {
+		if _, err := p.command("set_property", "pause", false); err != nil {
+			return PlayerErrMsg{Err: err}
+		}
+		return nil
+	}
+}
+
 // Quit flushes position and tells mpv to exit.
 func (p *Player) Quit() {
 	p.Shutdown()
