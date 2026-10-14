@@ -459,6 +459,10 @@ type Stream struct {
 		Filename  string `json:"filename"`
 		VideoSize int64  `json:"videoSize"`
 		VideoHash string `json:"videoHash"`
+
+		// Streams from the same release share one, so the next episode
+		// can be matched to the release you were watching.
+		BingeGroup string `json:"bingeGroup"`
 	} `json:"behaviorHints"`
 
 	Addon string // injected
@@ -598,6 +602,12 @@ type AppConfig struct {
 	MoviePattern    string `json:"movie_pattern"`
 	EpisodePattern  string `json:"episode_pattern"`
 	DateFormat      string `json:"date_format"`
+
+	// Stream list layout, kept between sessions. Hide rather than show so
+	// the details pane is on for a config written before it existed.
+	HideStreamDetails bool   `json:"hide_stream_details"`
+	StreamAudio       bool   `json:"stream_audio"`
+	StreamSort        string `json:"stream_sort"` // "", "size" or "res"
 }
 
 // SetDefaults fills in anything missing. Returns true if it changed something,

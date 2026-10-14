@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type streamsMsg struct {
@@ -65,6 +67,17 @@ type streamScreen struct {
 	// Auto-retry attempts already made for the current fetch. Reset by a
 	// manual refetch; a fresh screen starts at zero.
 	retries int
+
+	// Parsed once per fetch, parallel to streams: the row's columns. opts
+	// is the list-wide context the rows were last drawn with.
+	infos []streamInfo
+	opts  rowOpts
+
+	// The details pane under the list: the selected stream's full name and
+	// description, which a one-line row can't hold. detailH is its height,
+	// rule included, sized to the tallest stream shown so the list doesn't
+	// jump as the cursor moves. Whether it shows is ctx.cfg's to remember.
+	detailH int
 }
 
 // newStreamScreenFiltered starts with a filter already applied.
@@ -140,7 +153,7 @@ func (s *streamScreen) Typing() bool { return s.list.Typing() }
 func (s *streamScreen) SetSize(w, h int) {
 	changed := w != s.w
 	s.baseScreen.SetSize(w, h)
-	s.list.SetSize(w, h-2) // header + provider bar
+	s.layout()
 
 	// Stream labels are truncated to the width they were built at, so a
 	// resize has to rebuild them or they stay clipped to the old width.
@@ -157,6 +170,9 @@ func (s *streamScreen) Footer() string {
 	pairs := [][2]string{
 		{"enter", "play"},
 		{"0-9", "jump"},
+		{"i", "details"},
+		{"a", "audio"},
+		{"s", "sort"},
 	}
 	if s.blocked > 0 || s.showBlocked {
 		pairs = append(pairs, [2]string{"B", "blocked"})
@@ -191,6 +207,55 @@ func (s *streamScreen) Footer() string {
 	return withStatus(s.list.Status(), out)
 }
 
+// layout sizes the list around the header, provider bar and details pane.
+func (s *streamScreen) layout() {
+	s.detailH = 0
+	if !ctx.cfg.HideStreamDetails && s.loaded {
+		for _, i := range s.shown {
+			s.detailH = max(s.detailH, len(s.infos[i].Detail))
+		}
+		if s.detailH > 0 {
+			s.detailH++ // the rule above it
+		}
+	}
+	// Never squeeze the list below a few rows for the sake of the pane.
+	if s.h-3-s.detailH < 3 {
+		s.detailH = 0
+	}
+	s.list.SetSize(s.w, s.h-3-s.detailH) // title + provider bar + column header + details
+}
+
+// details renders the pane for the selected stream, padded to detailH.
+func (s *streamScreen) details() string {
+	if s.detailH == 0 {
+		return ""
+	}
+	var lines []string
+	if i := s.list.Selected(); i >= 0 && i < len(s.shown) {
+		lines = s.infos[s.shown[i]].Detail
+	}
+	clip := lipgloss.NewStyle().MaxWidth(max(1, s.w-2))
+	var b strings.Builder
+	b.WriteString(rule(s.w))
+	for n := 0; n < s.detailH-1; n++ {
+		b.WriteString("\n")
+		if n < len(lines) {
+			b.WriteString(clip.Render("  " + lines[n]))
+		}
+	}
+	return b.String()
+}
+
+func streamSortName(mode string) string {
+	switch mode {
+	case "size":
+		return "size"
+	case "res":
+		return "resolution"
+	}
+	return "default"
+}
+
 // providerFilter is the addon name currently selected, "" meaning all.
 func (s *streamScreen) providerFilter() string {
 	if s.provIdx <= 0 || s.provIdx >= len(s.providers) {
@@ -199,15 +264,66 @@ func (s *streamScreen) providerFilter() string {
 	return s.providers[s.provIdx]
 }
 
+// rowOpts is the list-wide context rows are drawn in.
+func (s *streamScreen) rowOpts() rowOpts {
+	o := rowOpts{Width: s.w, Audio: ctx.cfg.StreamAudio, Resume: s.target.Resume}
+
+	var durs []int
+	for _, in := range s.infos {
+		if in.Dur > 0 {
+			durs = append(durs, in.Dur)
+		}
+	}
+	// Median rather than mean: one mislabelled two-minute sample would drag
+	// a mean far enough to flag every honest copy.
+	if len(durs) >= 3 {
+		sort.Ints(durs)
+		o.Median = durs[len(durs)/2]
+	}
+	return o
+}
+
+// order is the sequence rows are shown in: the default sort, or by size or
+// resolution, then reversed if asked. Indices into streams, which itself
+// stays in default order so switching back needs no refetch.
+func (s *streamScreen) order() []int {
+	idx := make([]int, len(s.streams))
+	for i := range idx {
+		idx[i] = i
+	}
+	bySize := func(a, b int) bool { return s.infos[a].Bytes > s.infos[b].Bytes }
+	switch ctx.cfg.StreamSort {
+	case "size":
+		sort.SliceStable(idx, func(i, j int) bool { return bySize(idx[i], idx[j]) })
+	case "res":
+		sort.SliceStable(idx, func(i, j int) bool {
+			ra, rb := resRank(s.infos[idx[i]].Res), resRank(s.infos[idx[j]].Res)
+			if ra != rb {
+				return ra > rb
+			}
+			return bySize(idx[i], idx[j])
+		})
+	}
+	if s.reverse {
+		for i, j := 0, len(idx)-1; i < j; i, j = i+1, j-1 {
+			idx[i], idx[j] = idx[j], idx[i]
+		}
+	}
+	return idx
+}
+
 func (s *streamScreen) rebuild() {
 	want := s.providerFilter()
 	terms := ctx.cfg.Blocked
+	s.opts = s.rowOpts()
+	opts := s.opts
 
 	s.shown = s.shown[:0]
 	s.blocked = 0
 
 	var items []Item
-	for i, st := range s.streams {
+	for _, i := range s.order() {
+		st := s.streams[i]
 		if want != "" && st.Addon != want {
 			continue
 		}
@@ -220,9 +336,10 @@ func (s *streamScreen) rebuild() {
 		}
 
 		s.shown = append(s.shown, i)
-		items = append(items, Item{Label: FmtStream(st, s.w)})
+		items = append(items, Item{Label: FmtStream(s.infos[i], opts)})
 	}
 	s.list.SetItems(items)
+	s.layout()
 }
 
 // collectProviders builds the filter bar from whichever addons replied.
@@ -301,7 +418,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 		Resume:    pos,
 		Queue:     &nq,
 	}
-	s.streams = nil
+	s.streams, s.infos = nil, nil
 	s.retries = 0
 	s.list.SetItems(nil)
 	return s.load()
@@ -335,6 +452,10 @@ func (s *streamScreen) request(st Stream, resume float64) PlayRequest {
 			entry.NextTitle = n.Title
 			entry.NextReleased = n.Released
 		}
+	}
+
+	if t.MediaType == "series" {
+		SetBinge(t.Meta.ID, st.BehaviorHints.BingeGroup)
 	}
 
 	return PlayRequest{
@@ -486,7 +607,15 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				playable = append(playable, st)
 			}
 		}
-		s.streams = SortStreams(playable, ctx.cfg.PreferredQuality, ctx.cfg.CachedFirst)
+		binge := ""
+		if s.target.MediaType == "series" {
+			binge = GetBinge(s.target.Meta.ID)
+		}
+		s.streams = SortStreams(playable, ctx.cfg.PreferredQuality, binge, ctx.cfg.CachedFirst)
+		s.infos = make([]streamInfo, len(s.streams))
+		for i, st := range s.streams {
+			s.infos[i] = parseStream(st)
+		}
 		s.collectProviders()
 		s.rebuild()
 
@@ -553,6 +682,27 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i := s.list.Selected(); i >= 0 && i < len(s.shown) {
 				return s, s.queue(s.streams[s.shown[i]])
 			}
+		case "i":
+			ctx.cfg.HideStreamDetails = !ctx.cfg.HideStreamDetails
+			SaveConfig(ctx.cfg)
+			s.layout()
+		case "a":
+			ctx.cfg.StreamAudio = !ctx.cfg.StreamAudio
+			SaveConfig(ctx.cfg)
+			s.rebuild()
+		case "s":
+			switch ctx.cfg.StreamSort {
+			case "":
+				ctx.cfg.StreamSort = "size"
+			case "size":
+				ctx.cfg.StreamSort = "res"
+			default:
+				ctx.cfg.StreamSort = ""
+			}
+			SaveConfig(ctx.cfg)
+			s.rebuild()
+			s.list.Focus(0)
+			return s, toast("sorted by " + streamSortName(ctx.cfg.StreamSort))
 		case "w":
 			// Films had no way back from a wrong watched mark: w exists on
 			// episode lists, and a film never appears in one.
@@ -567,9 +717,6 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			s.retries = 0
 			return s, tea.Batch(s.reload(), toast("refetching streams…"))
 		case "r":
-			for i, j := 0, len(s.streams)-1; i < j; i, j = i+1, j-1 {
-				s.streams[i], s.streams[j] = s.streams[j], s.streams[i]
-			}
 			s.reverse = !s.reverse
 			s.rebuild()
 		case "[":
@@ -601,5 +748,12 @@ func (s *streamScreen) View() string {
 	if bar := s.providerBar(); bar != "" {
 		out += bar + "\n"
 	}
-	return out + s.list.View()
+	if len(s.shown) > 0 {
+		out += StreamHeader(s.opts, ctx.cfg.StreamSort, s.reverse) + "\n"
+	}
+	out += s.list.View()
+	if d := s.details(); d != "" {
+		out += "\n" + d
+	}
+	return out
 }

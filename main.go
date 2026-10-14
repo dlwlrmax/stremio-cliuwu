@@ -102,6 +102,7 @@ func main() {
 	// addons are the user's to add — there's no account to pull them from.
 	refs := LoadAddonRefs()
 	LoadSubPrefs()
+	LoadBingePrefs()
 	firstRun := false
 	if len(refs.Items) == 0 {
 		if _, err := os.Stat(addonsFile()); os.IsNotExist(err) {

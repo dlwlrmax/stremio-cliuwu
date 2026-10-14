@@ -772,8 +772,10 @@ func (d *Downloader) copy(dl *Download, dst io.Writer, src io.Reader) error {
 
 // ── Formatting ────────────────────────────────────────────────────────────────
 
+// fmtBytes uses decimal units, as the addons and the Stremio app do — in
+// binary a 37.3 GB file reads as 34.7, and the two never agree.
 func fmtBytes(n int64) string {
-	const unit = 1024
+	const unit = 1000
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
 	}
