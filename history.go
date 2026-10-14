@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,6 +67,11 @@ type showState struct {
 	// Poster is optional and only ever arrives from Stremio. Old files load
 	// fine without it, so the format version doesn't move.
 	Poster string `json:"poster,omitempty"`
+
+	// The addon that served a library entry. Kept on the show rather than
+	// on a recent row, because recent rows age out and the entry is still
+	// openable from the grouped view long afterwards.
+	Base string `json:"base,omitempty"`
 
 	// Keyed "season:episode". Movies use "0:0".
 	Eps map[string]*epState `json:"eps,omitempty"`
@@ -214,6 +218,9 @@ func (h *historyStore) show(id string, m Meta) *showState {
 	if m.Year != "" {
 		sh.Year = m.Year
 	}
+	if m.Base != "" {
+		sh.Base = m.Base
+	}
 	return sh
 }
 
@@ -226,6 +233,7 @@ func (h *historyStore) ep(showID, key string) *epState {
 
 func (h *historyStore) trimRecent() {
 	if n := recentLimit(); len(h.data.Recent) > n {
+		clear(h.data.Recent[n:])
 		h.data.Recent = h.data.Recent[:n]
 	}
 }
@@ -259,7 +267,7 @@ func (h *historyStore) Flush() {
 	h.mu.Unlock()
 
 	if err == nil {
-		writeAtomic(histFile(), b)
+		writeAtomic(histFile(), b, 0644)
 	}
 }
 
@@ -277,38 +285,6 @@ func WarmHistory() {
 // FlushHistory is called on the way out so the last few seconds aren't lost.
 func FlushHistory() { hist.Flush() }
 
-// writeAtomic writes to a temporary file and renames over the target.
-//
-// os.WriteFile truncates in place, so an interrupted write leaves a truncated
-// file rather than the previous one — losing history outright instead of a
-// few seconds of it.
-func writeAtomic(path string, b []byte) error {
-	ensureDir()
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-
-	os.Chmod(name, 0644)
-	return os.Rename(name, path)
-}
 
 // ── In-progress cache ─────────────────────────────────────────────────────────
 
@@ -383,7 +359,7 @@ func AddHistory(e HistoryEntry, maxEntries int) {
 	defer hist.mu.Unlock()
 	hist.load()
 
-	sh := hist.show(e.ID, Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year})
+	sh := hist.show(e.ID, Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
 	now := time.Now().Unix()
 	sh.SeenAt = now
 
@@ -413,6 +389,8 @@ func (h *historyStore) pushRecent(e HistoryEntry, now int64) {
 		out = append(out, r)
 	}
 
+	// No clear needed here: the append below builds a new slice, so the old
+	// backing array goes unreachable whole.
 	h.data.Recent = append([]recentEntry{{
 		ShowID: e.ID, Season: e.Season, Episode: e.Episode,
 		VideoID: e.VideoID, EpTitle: e.EpTitle, Total: e.EpisodeTotal, At: now,
@@ -512,7 +490,7 @@ func SetWatchedByEpisode(e HistoryEntry, watched bool) {
 	defer hist.mu.Unlock()
 	hist.load()
 
-	sh := hist.show(e.ID, Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year})
+	sh := hist.show(e.ID, Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
 	key := epKey(e.Season, e.Episode)
 
 	st := sh.Eps[key]
@@ -728,6 +706,7 @@ func (h *historyStore) recentEntries() HistoryList {
 		e := HistoryEntry{
 			Name: sh.Name, ID: r.ShowID, Type: sh.Type, Source: sh.Source, Year: sh.Year,
 			Season: r.Season, Episode: r.Episode, VideoID: r.VideoID, EpTitle: r.EpTitle,
+			Base: sh.Base,
 			EpisodeTotal: r.Total, WatchedAt: time.Unix(r.At, 0),
 			NextVideoID: r.NextVideoID, NextSeason: r.NextSeason,
 			NextEpisode: r.NextEpisode, NextTitle: r.NextTitle,
@@ -749,6 +728,7 @@ type ShowSummary struct {
 	Type     string
 	Source   string
 	Year     string
+	Base     string
 	Episodes int   // watched or part-watched
 	SeenAt   int64 // most recent activity
 }
@@ -776,7 +756,7 @@ func HistoryShows() []ShowSummary {
 		}
 		out = append(out, ShowSummary{
 			ID: id, Name: sh.Name, Type: sh.Type, Source: sh.Source,
-			Year: sh.Year, Episodes: n, SeenAt: sh.SeenAt,
+			Year: sh.Year, Base: sh.Base, Episodes: n, SeenAt: sh.SeenAt,
 		})
 	}
 
@@ -803,6 +783,7 @@ func ClearShow(id string) {
 			kept = append(kept, r)
 		}
 	}
+	clear(hist.data.Recent[len(kept):]) // drop the tail's strings
 	hist.data.Recent = kept
 
 	hist.reindex()

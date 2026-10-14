@@ -219,12 +219,18 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case popMsg:
 		for i := 0; i < m.n && len(a.stack) > 1; i++ {
+			// Cleared, not just sliced off. Shrinking a slice leaves the
+			// element in the backing array, so a popped catalog screen keeps
+			// its metas, its info pane and its poster state reachable until
+			// something happens to be pushed into that slot.
+			a.stack[len(a.stack)-1] = nil
 			a.stack = a.stack[:len(a.stack)-1]
 		}
 		a.resize()
 		return a, a.refreshTop()
 
 	case popRootMsg:
+		clear(a.stack[1:])
 		a.stack = a.stack[:1]
 		a.resize()
 		return a, a.refreshTop()
@@ -289,6 +295,18 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
+// globalHints are the keys that work on every screen, listed in the overlay
+// because the footer only mentions them when they apply.
+func (a *app) globalHints() [][2]string {
+	out := [][2]string{{"?", "this list"}, {"ctrl+q", "quit"}}
+	if a.pstate.Alive {
+		out = append(out,
+			[2]string{"S", "subtitles"},
+			[2]string{"X", "stop mpv"})
+	}
+	return out
+}
+
 func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 	if k.String() == "ctrl+c" {
 		return tea.Quit, true
@@ -309,6 +327,28 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 		if len(a.stack) > 1 {
 			return pop(), true
 		}
+	case "?":
+		// Snapshotted before the push: the overlay's own footer calls
+		// keyHint, which would otherwise replace the list it is meant to be
+		// showing.
+		if _, already := a.top().(*keysScreen); already {
+			return nil, false
+		}
+		// Globals the screen already lists are not repeated: the menu names
+		// ctrl+q itself, being the one place quitting is the obvious thing
+		// to do.
+		keys := append([][2]string{}, footerKeys...)
+		seen := map[string]bool{}
+		for _, p := range keys {
+			seen[p[0]] = true
+		}
+		for _, p := range a.globalHints() {
+			if !seen[p[0]] {
+				keys = append(keys, p)
+			}
+		}
+		return push(newKeysScreen(a.top().Title(), keys)), true
+
 	case "ctrl+q":
 		return quitCmd(), true
 	// Pause and seek are deliberately absent: mpv already owns those, and
@@ -380,22 +420,47 @@ func (a *app) refreshTop() tea.Cmd {
 }
 
 // quitCmd confirms first when something is playing, since quitting takes mpv
-// with it under the default settings.
+// with it under the default settings, and when downloads are still running,
+// since the queue lives in this process and goes with it.
 func quitCmd() tea.Cmd {
-	if !ctx.player.State().Alive {
+	playing := ctx.player.State().Alive
+	pending := 0
+	if ctx.downloader != nil {
+		pending = ctx.downloader.Pending()
+	}
+
+	if !playing && pending == 0 {
 		return tea.Quit
 	}
-	msg := "stop watching and quit?"
-	noLabel := "keep watching"
-	if !ctx.cfg.CloseMpvOnExit {
-		msg = "quit? mpv will keep playing."
+
+	var msg, noLabel string
+	switch {
+	case playing && pending > 0:
+		// The part files survive, so this is interrupted rather than lost.
+		msg = fmt.Sprintf("stop watching and quit? %s still downloading.", plural(pending, "file"))
+		noLabel = "keep watching"
+		if !ctx.cfg.CloseMpvOnExit {
+			msg = fmt.Sprintf("quit? mpv keeps playing, but %s still downloading.", plural(pending, "file"))
+			noLabel = "stay"
+		}
+	case pending > 0:
+		msg = fmt.Sprintf("quit? %s still downloading — they'll resume next time.", plural(pending, "file"))
 		noLabel = "stay"
+	default:
+		msg = "stop watching and quit?"
+		noLabel = "keep watching"
+		if !ctx.cfg.CloseMpvOnExit {
+			msg = "quit? mpv will keep playing."
+			noLabel = "stay"
+		}
 	}
+
 	return push(newChoice("quit", msg, "quit", noLabel,
 		func() tea.Cmd { return tea.Quit },
 		nil,
 	))
 }
+
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
@@ -518,7 +583,13 @@ func (a *app) View() string {
 
 	hints := a.top().Footer()
 	if a.pstate.Alive {
-		hints += keyHint([2]string{"S", "subtitles"}, [2]string{"X", "stop mpv"})
+		hints += keyHintMore([2]string{"S", "subtitles"}, [2]string{"X", "stop mpv"})
+	}
+
+	// Last on the line, after the globals, so it sits in the same place on
+	// every screen. The overlay itself says "? close" instead.
+	if _, onKeys := a.top().(*keysScreen); !onKeys {
+		hints += keyHintMore([2]string{"?", "keys"})
 	}
 	b.WriteString(clamp(hints, a.w))
 

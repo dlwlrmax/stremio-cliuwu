@@ -8,31 +8,6 @@ import (
 	"time"
 )
 
-// FlexString accepts a JSON string or a bare number. Addons are loose about
-// types — Cinemeta sends imdbRating as "7.5" but some send 7.5 — and a strict
-// `string` field makes the whole meta decode fail, which is why a numeric
-// rating used to drop the title detail entirely.
-type FlexString string
-
-func (s *FlexString) UnmarshalJSON(b []byte) error {
-	t := strings.TrimSpace(string(b))
-	if t == "" || t == "null" {
-		*s = ""
-		return nil
-	}
-	if len(t) > 1 && t[0] == '"' && t[len(t)-1] == '"' {
-		var str string
-		if err := json.Unmarshal(b, &str); err != nil {
-			return err
-		}
-		*s = FlexString(str)
-		return nil
-	}
-	// number / bool / other scalar — keep the literal text.
-	*s = FlexString(t)
-	return nil
-}
-
 // ── List rendering ────────────────────────────────────────────────────────────
 
 // Item is a single row in any list screen.
@@ -266,6 +241,37 @@ func (a Addon) SupportsResource(name, mediaType, id string) bool {
 		}
 	}
 	return false
+}
+
+// FlexString is a string that tolerates a non-string scalar in JSON.
+//
+// Addons disagree on whether runtime and imdbRating are strings or numbers.
+// getJSON no longer fails the whole response over a mismatch, but that leaves
+// the field empty; this keeps the value.
+type FlexString string
+
+func (s *FlexString) UnmarshalJSON(b []byte) error {
+	t := strings.TrimSpace(string(b))
+	if t == "" || t == "null" {
+		*s = ""
+		return nil
+	}
+	if t[0] == '"' {
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return err
+		}
+		*s = FlexString(str)
+		return nil
+	}
+	// An object or array isn't a value worth rendering, but it mustn't fail
+	// the decode either — kitsu_id arrives as an array on some meta objects.
+	if t[0] == '[' || t[0] == '{' {
+		*s = ""
+		return nil
+	}
+	*s = FlexString(t) // number or bool — keep the literal text
+	return nil
 }
 
 // MetaDetail is the full meta object. Catalog rows only carry enough to draw
@@ -603,6 +609,11 @@ type AppConfig struct {
 	EpisodePattern  string `json:"episode_pattern"`
 	DateFormat      string `json:"date_format"`
 
+	// What mpv shows as the title. "default" leaves mpv to work it out from
+	// the url, "formatted" uses the built-in forms, anything else is a
+	// pattern using the same placeholders as the download filenames.
+	MpvTitle string `json:"mpv_title"`
+
 	// Stream list layout, kept between sessions. Hide rather than show so
 	// the details pane is on for a config written before it existed.
 	HideStreamDetails bool   `json:"hide_stream_details"`
@@ -678,6 +689,11 @@ func (c *AppConfig) SetDefaults() bool {
 		changed = true
 	}
 
+	if c.MpvTitle == "" {
+		c.MpvTitle = "default"
+		changed = true
+	}
+
 	if c.MoviePattern == "" {
 		c.MoviePattern = DefaultMoviePattern
 		changed = true
@@ -742,6 +758,11 @@ type Favourite struct {
 	Year   string `json:"year"`
 	Season int    `json:"season"` // 0 = whole show
 	Added  string `json:"added"`
+
+	// Same reason as showState.Base: a favourited library entry is opened
+	// by asking its addon for the file list, and nothing else records which
+	// addon that was.
+	Base string `json:"base,omitempty"`
 }
 
 type FavouriteList struct {
@@ -763,6 +784,11 @@ type HistoryEntry struct {
 	Position  float64   `json:"position,omitempty"`
 	Duration  float64   `json:"duration,omitempty"`
 	Watched   bool      `json:"watched"`
+
+	// The addon that served this, for library entries. Their files live
+	// behind a meta lookup rather than a stream search, so resuming one
+	// without knowing which addon to ask returns nothing at all.
+	Base string `json:"base,omitempty"`
 	WatchedAt time.Time `json:"watched_at"`
 
 	// Recorded when playback starts so the menu can offer the next episode

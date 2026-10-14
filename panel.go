@@ -161,7 +161,7 @@ func FetchTargetInfo(e HistoryEntry) tea.Cmd {
 			return targetInfoMsg{Key: targetKey(e), Detail: d}
 		}
 
-		m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Source: e.Source}
+		m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Source: e.Source, Base: e.Base}
 		for _, v := range GetSeriesMeta(ctx.addons, m).Videos {
 			if v.ID == e.VideoID || (v.Season == e.Season && v.Episode == e.Episode) {
 				return targetInfoMsg{Key: targetKey(e), Video: v}
@@ -378,7 +378,7 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 			facts = append(facts, string(d.Runtime))
 		}
 		if d.ImdbRating != "" && d.ImdbRating != "N/A" {
-			facts = append(facts, "★ "+string(d.ImdbRating))
+			facts = append(facts, "★ "+fmtRating(string(d.ImdbRating)))
 		}
 		if len(facts) > 0 {
 			out = append(out, stKey.Render(strings.Join(facts, "  ·  ")))

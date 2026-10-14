@@ -78,9 +78,9 @@ func (s *menuScreen) SetSize(w, h int) {
 func (s *menuScreen) Footer() string {
 	pairs := [][2]string{{"enter", "open"}}
 	if n := s.panel.Count(); n > 0 && s.panel.On() {
-		pairs = append(pairs, [2]string{fmt.Sprintf("1-%d", min(n, 9)), "resume"})
+		pairs = append(pairs, [2]string{fmt.Sprintf("1-%d", min(n, 9)), "resume from the panel"})
 	}
-	pairs = append(pairs, [2]string{"i", "panel"}, [2]string{"ctrl+q", "quit"})
+	pairs = append(pairs, [2]string{"i", "toggle panel"}, [2]string{"ctrl+q", "quit"})
 	return keyHint(pairs...)
 }
 
@@ -335,7 +335,7 @@ func (s *menuScreen) View() string {
 // menu › show › season › streams — meaning `b` out of the stream picker lands
 // on the episode list, the way the old client behaved.
 func resumeScreen(e HistoryEntry) screen {
-	m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Year: e.Year, Source: e.Source}
+	m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Year: e.Year, Source: e.Source, Base: e.Base}
 
 	// Episode number, not season: a special sits in season 0 and would
 	// otherwise be resumed as if it were a film.

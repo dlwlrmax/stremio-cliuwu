@@ -387,7 +387,7 @@ func (p *infoPane) render() string {
 		facts = append(facts, string(d.Runtime))
 	}
 	if d.ImdbRating != "" && d.ImdbRating != "N/A" {
-		facts = append(facts, "★ "+string(d.ImdbRating))
+		facts = append(facts, "★ "+fmtRating(string(d.ImdbRating)))
 	}
 	if len(facts) > 0 {
 		head = append(head, stKey.Render(strings.Join(facts, "  ·  ")))

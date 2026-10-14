@@ -37,7 +37,7 @@ func (s *favsScreen) SetSize(w, h int) {
 func (s *favsScreen) Footer() string {
 	return withStatus(s.list.Status(), keyHint(
 		[2]string{"enter", "open"},
-		[2]string{"d", "remove"},
+		[2]string{"d", "remove entry"},
 		[2]string{"/", "filter"},
 		[2]string{"b/esc", "back"},
 	))
@@ -61,7 +61,7 @@ func (s *favsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "enter":
 			if i := s.list.Selected(); i >= 0 {
 				f := s.favs[i]
-				m := Meta{ID: f.ID, Type: f.Type, Name: f.Name, Year: f.Year, Source: f.Source}
+				m := Meta{ID: f.ID, Type: f.Type, Name: f.Name, Year: f.Year, Source: f.Source, Base: f.Base}
 				return s, push(openMeta(m, func() int {
 					// A favourited show has season 0 meaning "the whole
 					// thing", not the specials season.
@@ -189,7 +189,7 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				sh := s.shows[i]
 				return s, push(openMeta(Meta{
 					ID: sh.ID, Type: sh.Type, Name: sh.Name,
-					Year: sh.Year, Source: sh.Source,
+					Year: sh.Year, Source: sh.Source, Base: sh.Base,
 				}, noSeason))
 			}
 			if i >= len(s.entries) {
@@ -302,11 +302,11 @@ func (s *addonsScreen) SetSize(w, h int) {
 
 func (s *addonsScreen) Footer() string {
 	return keyHint(
-		[2]string{"a", "add"},
-		[2]string{"d", "remove"},
-		[2]string{"t", "on/off"},
-		[2]string{"J/K", "reorder"},
-		[2]string{"r", "refresh"},
+		[2]string{"a", "add addon"},
+		[2]string{"d", "remove entry"},
+		[2]string{"t", "enable / disable"},
+		[2]string{"J/K", "move up / down"},
+		[2]string{"r", "refresh list"},
 		[2]string{"b/esc", "back"},
 	)
 }
@@ -455,7 +455,12 @@ func (s *settingsScreen) SetSize(w, h int) {
 }
 
 func (s *settingsScreen) Footer() string {
-	return keyHint([2]string{"enter", "edit / toggle"}, [2]string{"b/esc", "back"})
+	pairs := [][2]string{{"enter", "edit / toggle"}}
+	if s.update.State == updateAvailable {
+		pairs = append(pairs, [2]string{"u", "open the release"})
+	}
+	pairs = append(pairs, [2]string{"b/esc", "back"})
+	return keyHint(pairs...)
 }
 
 func onOff(b bool) string {
@@ -491,6 +496,13 @@ func (s *settingsScreen) rebuild() {
 
 	s.rows = []settingRow{
 		{head: "playback"},
+
+		{label: "mpv title", sub: "default is the release name, formatted is Show - S03E01",
+			badge: orDash(c.MpvTitle), act: func() tea.Cmd {
+				ctx.cfg.MpvTitle = nextMpvTitle(ctx.cfg.MpvTitle)
+				return s.save()
+			}},
+
 		{label: "mpv path", badge: orDash(c.MpvPath), act: func() tea.Cmd {
 			return s.prompt("mpv path", "mpv", ctx.cfg.MpvPath, func(v string) tea.Cmd {
 				ctx.cfg.MpvPath = v
