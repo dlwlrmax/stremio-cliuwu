@@ -455,9 +455,11 @@ func SortStreams(streams []Stream, preferred, binge string, cachedFirst bool) []
 	return streams
 }
 
-// streamDetailMax caps the details pane. Some addons write a dozen lines of
-// description; past this it starts eating the list it's describing.
-const streamDetailMax = 8
+// streamDetailMax caps the details pane. AIOStreams' default format runs to
+// nine or ten lines with the name, and 8 was cutting its cache and library
+// line; past this, a long description starts eating the list it describes.
+// layout still drops the pane entirely on a terminal too short for it.
+const streamDetailMax = 12
 
 // streamDetailLines is the stream's own text, line for line, the way the
 // Stremio app shows it: the addon's name block, then its description.
