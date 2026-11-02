@@ -70,14 +70,14 @@ func tw() int {
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
 var (
-	clAccent = lipgloss.Color("13")
-	clGrey   = lipgloss.Color("240")
-	clDim    = lipgloss.Color("244")
-	clGreen  = lipgloss.Color("10")
-	clYellow = lipgloss.Color("11")
-	clRed    = lipgloss.Color("9")
+	clAccent  = lipgloss.Color("13")
+	clGrey    = lipgloss.Color("240")
+	clDim     = lipgloss.Color("244")
+	clGreen   = lipgloss.Color("10")
+	clYellow  = lipgloss.Color("11")
+	clRed     = lipgloss.Color("9")
 	clDarkRed = lipgloss.Color("124") // stopped, not failed — muted rather than alarming
-	clCyan   = lipgloss.Color("14")
+	clCyan    = lipgloss.Color("14")
 )
 
 // accentPresets are the named colours offered in settings. Anything else is
@@ -211,7 +211,6 @@ func keyHint(pairs ...[2]string) string {
 		}
 	}
 	footerKeys = live
-
 
 	shown := live
 	if len(live) > footerShown+1 {

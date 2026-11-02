@@ -445,8 +445,6 @@ func sourceTag(source string) string {
 	return grey("[?]")
 }
 
-
-
 // progressGlyph renders a compact "12:34 / 45:00 (27%)" style readout.
 func progressGlyph(pos, dur float64) string {
 	if dur <= 0 {

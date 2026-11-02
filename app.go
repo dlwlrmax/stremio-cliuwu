@@ -478,7 +478,6 @@ func quitCmd() tea.Cmd {
 	))
 }
 
-
 // ── Layout ────────────────────────────────────────────────────────────────────
 
 // chromeLayout decides what fits.

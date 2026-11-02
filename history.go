@@ -298,7 +298,6 @@ func WarmHistory() {
 // FlushHistory is called on the way out so the last few seconds aren't lost.
 func FlushHistory() { hist.Flush() }
 
-
 // ── In-progress cache ─────────────────────────────────────────────────────────
 
 var (
@@ -719,7 +718,7 @@ func (h *historyStore) recentEntries() HistoryList {
 		e := HistoryEntry{
 			Name: sh.Name, ID: r.ShowID, Type: sh.Type, Source: sh.Source, Year: sh.Year,
 			Season: r.Season, Episode: r.Episode, VideoID: r.VideoID, EpTitle: r.EpTitle,
-			Base: sh.Base,
+			Base:         sh.Base,
 			EpisodeTotal: r.Total, WatchedAt: time.Unix(r.At, 0),
 			NextVideoID: r.NextVideoID, NextSeason: r.NextSeason,
 			NextEpisode: r.NextEpisode, NextTitle: r.NextTitle,

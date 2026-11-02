@@ -22,16 +22,16 @@ type episodesMsg struct {
 
 type seasonScreen struct {
 	baseScreen
-	id      asyncID
-	show    Meta
-	jumpTo  int // season to open immediately, or noSeason for none
-	jumped  bool
+	id     asyncID
+	show   Meta
+	jumpTo int // season to open immediately, or noSeason for none
+	jumped bool
 
 	// Set when resuming from history: the episode to open, and where in it.
 	autoEpisode int
 	autoResume  float64
-	sm      SeriesMeta
-	seasons []int
+	sm          SeriesMeta
+	seasons     []int
 
 	list   listModel
 	busy   busy

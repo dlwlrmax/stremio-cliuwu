@@ -772,23 +772,23 @@ type FavouriteList struct {
 // ── History ───────────────────────────────────────────────────────────────────
 
 type HistoryEntry struct {
-	Name      string    `json:"name"`
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Source    string    `json:"source"`
-	Year      string    `json:"year"`
-	Season    int       `json:"season,omitempty"`
-	Episode   int       `json:"episode,omitempty"`
-	VideoID   string    `json:"video_id,omitempty"`
-	EpTitle   string    `json:"ep_title,omitempty"`
-	Position  float64   `json:"position,omitempty"`
-	Duration  float64   `json:"duration,omitempty"`
-	Watched   bool      `json:"watched"`
+	Name     string  `json:"name"`
+	ID       string  `json:"id"`
+	Type     string  `json:"type"`
+	Source   string  `json:"source"`
+	Year     string  `json:"year"`
+	Season   int     `json:"season,omitempty"`
+	Episode  int     `json:"episode,omitempty"`
+	VideoID  string  `json:"video_id,omitempty"`
+	EpTitle  string  `json:"ep_title,omitempty"`
+	Position float64 `json:"position,omitempty"`
+	Duration float64 `json:"duration,omitempty"`
+	Watched  bool    `json:"watched"`
 
 	// The addon that served this, for library entries. Their files live
 	// behind a meta lookup rather than a stream search, so resuming one
 	// without knowing which addon to ask returns nothing at all.
-	Base string `json:"base,omitempty"`
+	Base      string    `json:"base,omitempty"`
 	WatchedAt time.Time `json:"watched_at"`
 
 	// Recorded when playback starts so the menu can offer the next episode
