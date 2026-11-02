@@ -11,7 +11,8 @@
 set -euo pipefail
 
 BINARY="stremio-cliuwu"
-INSTALL_DIR="${PREFIX:-$HOME/.local/bin}"
+INSTALL_DIR="${PREFIX:+$PREFIX/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 cd "$(dirname "$0")"
 
@@ -48,6 +49,6 @@ case ":$PATH:" in
   *":${INSTALL_DIR}:"*) ;;
   *)
     echo "  ! ${INSTALL_DIR} is not on your PATH. Add this line to ~/.bashrc (or ~/.zshrc):"
-    echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo "      export PATH=\"${INSTALL_DIR}:\$PATH\""
     ;;
 esac

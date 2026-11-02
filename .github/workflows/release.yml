@@ -37,11 +37,18 @@ jobs:
 
       - name: Resolve tag and version
         id: version
+        # The tag goes in through env, not interpolated into the script: a
+        # manual run's input is free text and would otherwise be shell.
+        env:
+          TAG_INPUT: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
-          echo "VERSION=${TAG#v}" >> $GITHUB_OUTPUT
+          TAG="$TAG_INPUT"
+          echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
           echo "releasing ${TAG}"
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Build
         run: |
@@ -59,6 +66,8 @@ jobs:
           build linux   arm64 stremio-cliuwu-linux-arm64
           build windows amd64 stremio-cliuwu-windows-amd64.exe
           build darwin  arm64 stremio-cliuwu-darwin-arm64
+
+          (cd dist && sha256sum * > SHA256SUMS)
 
       - name: Create release
         uses: softprops/action-gh-release@v2
