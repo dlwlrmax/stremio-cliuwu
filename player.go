@@ -126,6 +126,7 @@ type Player struct {
 	replacing  bool         // suppress the end-file/stop that a replace generates
 	prefetched bool         // next episode already surfaced for this request
 	autoSubbed bool         // subtitle autoload already attempted for this request
+	subSeen    bool         // a subtitle track was active in the current file
 	playGen    uint64       // bumped on every play(); stale subtitle fetches drop out
 	seekTo     float64      // pending resume seek, applied on file-loaded
 	lastSave   time.Time    // throttles history writes
@@ -463,7 +464,7 @@ func (p *Player) commandWait(wait time.Duration, args ...any) (map[string]any, e
 }
 
 func (p *Player) observe() {
-	props := []string{"time-pos", "duration", "pause", "media-title", "paused-for-cache"}
+	props := []string{"time-pos", "duration", "pause", "media-title", "paused-for-cache", "sid"}
 	for i, prop := range props {
 		p.command("observe_property", i+1, prop)
 	}
@@ -498,6 +499,7 @@ func (p *Player) dispatch(m map[string]any) {
 }
 
 func (p *Player) onProperty(name string, data any) {
+	showID := ""
 	p.mu.Lock()
 	switch name {
 	case "time-pos":
@@ -515,6 +517,19 @@ func (p *Player) onProperty(name string, data any) {
 	case "media-title":
 		if s, ok := data.(string); ok {
 			p.state.Title = cleanTitle(s)
+		}
+	case "sid":
+		// A track number means subtitles are on (autoloaded or hand-picked).
+		// mpv reports "no" as false: turning subtitles off after they had
+		// been on is the user saying this show wants none. Null (no file) and
+		// anything during a load are not that.
+		if _, on := data.(float64); on {
+			p.subSeen = true
+		} else if off, ok := data.(bool); ok && !off && p.subSeen &&
+			!p.state.Loading && !p.replacing &&
+			p.now != nil && p.now.MediaType == "series" && p.now.Queue != nil {
+			p.subSeen = false
+			showID = p.now.Entry.ID
 		}
 	}
 
@@ -549,6 +564,9 @@ func (p *Player) onProperty(name string, data any) {
 	}
 	p.mu.Unlock()
 
+	if showID != "" {
+		go SetSubPref(showID, subOff, "")
+	}
 	if save {
 		go UpdatePosition(videoID, st.Pos, st.Duration)
 	}
@@ -619,6 +637,20 @@ func (p *Player) maybeAutoSubtitle() {
 	p.mu.Unlock()
 
 	if skip {
+		return
+	}
+
+	// This show was last left with subtitles off. mpv's --slang may still have
+	// picked an embedded track on its own, so switch it off explicitly.
+	if hasPref && pref.Lang == subOff {
+		p.sendAsync(func() {
+			p.mu.Lock()
+			stale := p.playGen != gen
+			p.mu.Unlock()
+			if !stale {
+				p.command("set_property", "sid", "no")
+			}
+		})
 		return
 	}
 
@@ -1036,6 +1068,7 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	p.replacing = true
 	p.prefetched = false
 	p.autoSubbed = false
+	p.subSeen = false
 	p.playGen++    // invalidates any subtitle fetch still in flight
 	p.queued = nil // choosing something now supersedes whatever was lined up
 	p.now = &req

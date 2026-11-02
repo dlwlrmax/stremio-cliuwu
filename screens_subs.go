@@ -114,7 +114,7 @@ func (s *subsScreen) collectLangs() {
 	s.langIx = 0
 	want := ""
 	if s.showID != "" {
-		if p, ok := GetSubPref(s.showID); ok {
+		if p, ok := GetSubPref(s.showID); ok && p.Lang != subOff {
 			want = p.Lang
 		}
 	}

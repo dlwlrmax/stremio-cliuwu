@@ -10,6 +10,11 @@ import "sync"
 // language and the source (embedded vs plugin) that was picked by hand, keyed
 // by show id. Movies never get an entry; they always use the global path.
 
+// subOff is the Lang of a preference meaning "this show plays without
+// subtitles". It is recorded when subtitles are switched off mid-episode, and
+// replaced by any hand pick from the subtitle list.
+const subOff = "off"
+
 // ShowSubPref is one show's remembered choice.
 type ShowSubPref struct {
 	Lang string `json:"lang"`
