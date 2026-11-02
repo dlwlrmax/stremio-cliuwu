@@ -671,6 +671,24 @@ func watchedBitfield(showID string, sh *showState) string {
 		return ""
 	}
 
+	// Without the show's full episode list the local order has gaps, and
+	// stremio-core places every bit by its distance from the anchor: a gap
+	// shrinks that distance and ticks the wrong episodes on the other side.
+	// The anchor alone is always placed correctly, so that is all a sparse
+	// list may send.
+	if len(epsFromMeta(showID)) == 0 {
+		last := -1
+		for i, oe := range eps {
+			if st := sh.Eps[epKey(oe[0], oe[1])]; st != nil && st.W {
+				last = i
+			}
+		}
+		if last < 0 {
+			return EncodeWatchedBitfield(nil, nil)
+		}
+		eps = eps[last : last+1]
+	}
+
 	videos := make([]string, len(eps))
 	watched := map[string]bool{}
 	for i, oe := range eps {

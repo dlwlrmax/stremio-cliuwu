@@ -111,6 +111,30 @@ func DecodeWatchedBitfield(s string) (anchorID string, length int, bits map[int]
 	return anchorID, length, bits, nil
 }
 
+// AlignedWatched returns the indices of the n videos that a decoded bitfield
+// marks watched, aligned the way stremio-core does it.
+//
+// The stored bits are not addressed by absolute position. The anchor sits at
+// stored bit anchorLen-1 and at anchorIdx in the current list, and every other
+// bit is placed relative to it: video i takes stored bit i+offset, with
+// offset = anchorLen - anchorIdx - 1. That is what lets a list that gained or
+// lost videos at the front still line up. Reading bit i as video i is only
+// right when offset is 0, i.e. when the local list matches Stremio's from the
+// start up to the anchor.
+func AlignedWatched(anchorLen, anchorIdx, n int, bits map[int]bool) []int {
+	if anchorIdx < 0 || anchorIdx >= n {
+		return nil
+	}
+	offset := anchorLen - anchorIdx - 1
+	var out []int
+	for i := 0; i < n; i++ {
+		if j := i + offset; j >= 0 && j < anchorLen && bits[j] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 func zlibDeflate(b []byte) []byte {
 	var out bytes.Buffer
 	w := zlib.NewWriter(&out)

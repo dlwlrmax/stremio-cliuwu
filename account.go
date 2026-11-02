@@ -391,7 +391,7 @@ func MergeLibrary(items []libraryItem) int {
 // watched episode — is marked directly, so it lands even when it isn't in the
 // local ordering yet. Callers hold the lock.
 func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mtime int64) {
-	anchorID, _, bits, err := DecodeWatchedBitfield(bf)
+	anchorID, length, bits, err := DecodeWatchedBitfield(bf)
 	if err != nil {
 		return
 	}
@@ -415,14 +415,44 @@ func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mt
 		}
 	}
 
-	for idx := range bits {
-		if idx >= 0 && idx < len(eps) {
-			mark(eps[idx][0], eps[idx][1])
+	// Bits are placed relative to the anchor (see AlignedWatched). With the
+	// anchor missing from our list there is nothing to align to, and
+	// stremio-core treats that as a blank field too; only the anchor itself,
+	// marked below, is trusted.
+	if ai := anchorIndex(showID, anchorID, eps); ai >= 0 {
+		for _, i := range AlignedWatched(length, ai, len(eps), bits) {
+			mark(eps[i][0], eps[i][1])
 		}
 	}
 	if s, e, ok := videoEpisode(anchorID); ok {
 		mark(s, e)
 	}
+}
+
+// anchorIndex finds the anchor video in the ordered episode list. Matched on
+// season and episode rather than the id string, which may be spelled
+// differently by the other side. -1 when it isn't there or isn't a
+// "<showID>:<season>:<episode>" id.
+func anchorIndex(showID, anchorID string, eps [][2]int) int {
+	rest, ok := strings.CutPrefix(anchorID, showID+":")
+	if !ok {
+		return -1
+	}
+	parts := strings.Split(rest, ":")
+	if len(parts) != 2 {
+		return -1
+	}
+	s, err1 := strconv.Atoi(parts[0])
+	e, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return -1
+	}
+	for i, oe := range eps {
+		if oe[0] == s && oe[1] == e {
+			return i
+		}
+	}
+	return -1
 }
 
 // videoEpisode pulls (season, episode) out of a Stremio series videoId of the
