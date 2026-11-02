@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // configDir returns the per-user config directory, honouring XDG on unix.
@@ -101,7 +103,18 @@ func readJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(b, v)
+	if err := json.Unmarshal(b, v); err != nil {
+		quarantine(path)
+		return err
+	}
+	return nil
+}
+
+// quarantine moves an unreadable file aside. Callers fall back to an empty
+// value on a parse error, and the next save would overwrite the only copy of
+// addon URLs or watch history with it; renaming keeps it recoverable.
+func quarantine(path string) {
+	os.Rename(path, fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix()))
 }
 
 // defaultDownloadDir is a sensible starting point for the settings prompt.

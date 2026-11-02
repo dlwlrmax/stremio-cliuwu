@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,6 +122,7 @@ type epRef struct {
 
 type historyStore struct {
 	mu   sync.Mutex
+	fmu  sync.Mutex // serialises Flush end to end so writes land in order
 	data historyFile
 
 	byVideo map[string]epRef
@@ -162,6 +164,9 @@ func (h *historyStore) load() {
 	// a migration path forever. v2 → v3 added the real mtime M.
 	var f historyFile
 	if json.Unmarshal(b, &f) != nil || f.Version < 2 || f.Shows == nil {
+		// Starting empty is fine; overwriting the file on the next flush is
+		// not. Keep what was there.
+		quarantine(histFile())
 		return
 	}
 	if f.Version < historyVer {
@@ -255,6 +260,8 @@ func (h *historyStore) touch() {
 
 // Flush writes the store out if anything changed.
 func (h *historyStore) Flush() {
+	h.fmu.Lock()
+	defer h.fmu.Unlock()
 	h.mu.Lock()
 	h.pending = false
 	if !h.dirty || !h.loaded {
@@ -267,7 +274,13 @@ func (h *historyStore) Flush() {
 	h.mu.Unlock()
 
 	if err == nil {
-		writeAtomic(histFile(), b, 0644)
+		err = writeAtomic(histFile(), b, 0600)
+	}
+	if err != nil {
+		// Still unsaved: mark it so the next change or exit tries again.
+		h.mu.Lock()
+		h.dirty = true
+		h.mu.Unlock()
 	}
 }
 
@@ -806,12 +819,19 @@ func (h *historyStore) showInRecent(id string) bool {
 // Removing only the row left the episode still ticked in the season list and
 // still holding its position, so "delete from history" deleted the evidence
 // and kept the effect.
-func ClearHistoryEntry(idx int) {
+//
+// Matched by identity rather than list position: the screen's rows come from
+// recentEntries, which skips any row whose show is missing, so its indices
+// can drift from data.Recent and a delete would hit the neighbour.
+func ClearHistoryEntry(e HistoryEntry) {
 	hist.mu.Lock()
 	defer hist.mu.Unlock()
 	hist.load()
 
-	if idx < 0 || idx >= len(hist.data.Recent) {
+	idx := slices.IndexFunc(hist.data.Recent, func(r recentEntry) bool {
+		return r.ShowID == e.ID && r.Season == e.Season && r.Episode == e.Episode
+	})
+	if idx < 0 {
 		return
 	}
 

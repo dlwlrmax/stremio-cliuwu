@@ -17,7 +17,7 @@ func LoadConfig() AppConfig {
 	return c
 }
 
-func SaveConfig(c AppConfig) { writeJSON(cfgFile(), c) }
+func SaveConfig(c AppConfig) error { return writeJSON(cfgFile(), c) }
 
 // detectMpv looks for an mpv binary in the usual places.
 func detectMpv() string {

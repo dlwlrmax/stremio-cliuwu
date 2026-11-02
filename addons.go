@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -164,15 +165,45 @@ func RedactURL(raw string) string {
 	for i, seg := range segs {
 		if j := strings.Index(seg, "="); j > 0 {
 			key := seg[:j]
-			val := seg[j+1:]
-			if len(val) > 6 {
-				val = val[:3] + "…" + val[len(val)-2:]
-			}
-			segs[i] = key + "=" + val
+			segs[i] = key + "=" + maskSecret(seg[j+1:])
+		} else if len(seg) > 24 && !strings.Contains(seg, ".") {
+			// Long opaque segments are usually an encoded config blob.
+			segs[i] = maskSecret(seg)
 		}
 	}
 	u.Path = strings.Join(segs, "/")
+	u.User = nil
+	if u.RawQuery != "" {
+		q := u.Query()
+		for k, vs := range q {
+			for i, v := range vs {
+				vs[i] = maskSecret(v)
+			}
+			q[k] = vs
+		}
+		u.RawQuery = q.Encode()
+	}
 	return u.String()
+}
+
+// maskSecret keeps just enough of a value to tell two keys apart. Short values
+// are hidden entirely: showing most of a 6-character key is showing the key.
+func maskSecret(v string) string {
+	if len(v) <= 8 {
+		return "…"
+	}
+	return v[:3] + "…" + v[len(v)-2:]
+}
+
+var urlInText = regexp.MustCompile(`https?://[^\s"']+`)
+
+// RedactErr is err.Error() with any URL in it redacted. Go's http errors embed
+// the full request URL, which for an addon is the one carrying the debrid key.
+func RedactErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	return urlInText.ReplaceAllStringFunc(err.Error(), RedactURL)
 }
 
 // ── Fetching ──────────────────────────────────────────────────────────────────
@@ -188,7 +219,7 @@ func FetchAddon(manifestURL string) Addon {
 		return a
 	}
 	if a.Manifest.Name == "" {
-		a.Manifest.Name = manifestURL
+		a.Manifest.Name = RedactURL(manifestURL)
 	}
 	return a
 }

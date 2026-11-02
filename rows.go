@@ -172,7 +172,7 @@ func AddonItem(ref AddonRef, a *Addon) Item {
 		badge = grey("…")
 	case a.Err != nil:
 		badge = bad("failed")
-		sub = a.Err.Error()
+		sub = RedactErr(a.Err)
 	default:
 		name = a.Manifest.Name
 		var caps []string

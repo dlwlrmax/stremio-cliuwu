@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	neturl "net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -143,8 +144,19 @@ type posterMsg struct {
 	art string
 }
 
+const (
+	maxPosterBytes  = 4 << 20
+	maxPosterPixels = 40_000_000
+)
+
 // openURL hands a link to the desktop.
 func openURL(u string) error {
+	// Posters come from addon manifests. Without this a "poster" could be a
+	// local path or custom scheme, and Windows' FileProtocolHandler would
+	// happily launch it.
+	if p, err := neturl.Parse(u); err != nil || (p.Scheme != "http" && p.Scheme != "https") {
+		return fmt.Errorf("refusing to open %q", u)
+	}
 	switch runtime.GOOS {
 	case "windows":
 		return exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
@@ -405,12 +417,19 @@ func posterImg(url string) (*image.RGBA, bool) {
 		if res.StatusCode != http.StatusOK {
 			return nil, false
 		}
-		if raw, err = io.ReadAll(io.LimitReader(res.Body, 4<<20)); err != nil {
+		// One byte over the cap tells a truncated image from one that fit
+		// exactly; a cut-off file would otherwise be cached and fail to decode
+		// on every later try.
+		if raw, err = io.ReadAll(io.LimitReader(res.Body, maxPosterBytes+1)); err != nil || len(raw) > maxPosterBytes {
 			return nil, false
 		}
 		cachePosterBytes.Set(url, raw)
 	}
 
+	// A few bytes can declare enormous dimensions; check before allocating.
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(raw)); err != nil || cfg.Width*cfg.Height > maxPosterPixels {
+		return nil, false
+	}
 	decoded, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, false

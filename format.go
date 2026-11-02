@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // fmtRating normalises a rating for display. Addons disagree on precision:
@@ -319,6 +320,10 @@ func commonPrefix(a, b string) string {
 	for i < n && a[i] == b[i] {
 		i++
 	}
+	// Byte-wise match can stop inside a multi-byte character; back up to its start.
+	for i > 0 && i < len(a) && !utf8.RuneStart(a[i]) {
+		i--
+	}
 	return a[:i]
 }
 
@@ -552,7 +557,9 @@ func prefetchLead(dur float64) float64 {
 
 // IsWatchedAt reports whether a position counts as having finished the video.
 func IsWatchedAt(pos, dur float64) bool {
-	if dur <= 0 {
+	// pos 0 is "not started": a short or still-loading duration would
+	// otherwise satisfy the allowance on its own and mark the video watched.
+	if dur <= 0 || pos <= 0 {
 		return false
 	}
 	return dur-pos <= watchedAllowance(dur)

@@ -225,7 +225,7 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i >= len(s.entries) {
 				return s, nil
 			}
-			ClearHistoryEntry(i)
+			ClearHistoryEntry(s.entries[i])
 			invalidateInProgress()
 			s.rebuild()
 			return s, toast("removed")
@@ -479,10 +479,14 @@ func orDash(s string) string {
 
 func (s *settingsScreen) save() tea.Cmd {
 	ctx.cfg.SetDefaults()
-	SaveConfig(ctx.cfg)
+	err := SaveConfig(ctx.cfg)
 	ctx.player.SetConfig(ctx.cfg)
 	invalidateInProgress()
 	s.rebuild()
+	if err != nil {
+		// Applied for this session, but gone on restart.
+		return toastErr("couldn't write config: " + err.Error())
+	}
 	return toast("saved")
 }
 
@@ -803,7 +807,9 @@ func (s *settingsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			// Only when there's somewhere to go — an unadvertised key that
 			// does nothing is worse than no key.
 			if s.update.State == updateAvailable && s.update.URL != "" {
-				_ = openURL(s.update.URL)
+				if err := openURL(s.update.URL); err != nil {
+					return s, toastErr("couldn't open the release page")
+				}
 				return s, toast("opened the release page")
 			}
 		case "enter":
