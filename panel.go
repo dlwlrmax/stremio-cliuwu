@@ -154,7 +154,7 @@ func FetchTargetInfo(e HistoryEntry) tea.Cmd {
 
 		// A film has no episode to look up; it's the meta object itself.
 		if e.Season <= 0 {
-			d, ok := GetMetaDetail(ctx.addons, "movie", e.ID, "")
+			d, ok := GetMetaDetail(ctx.Addons(), "movie", e.ID, "")
 			if !ok {
 				return targetInfoMsg{}
 			}
@@ -162,7 +162,7 @@ func FetchTargetInfo(e HistoryEntry) tea.Cmd {
 		}
 
 		m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Source: e.Source, Base: e.Base}
-		for _, v := range GetSeriesMeta(ctx.addons, m).Videos {
+		for _, v := range GetSeriesMeta(ctx.Addons(), m).Videos {
 			if v.ID == e.VideoID || (v.Season == e.Season && v.Episode == e.Episode) {
 				return targetInfoMsg{Key: targetKey(e), Video: v}
 			}

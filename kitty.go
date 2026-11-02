@@ -91,7 +91,7 @@ func kittySupported() bool {
 	}
 
 	if ctx != nil {
-		switch ctx.cfg.KittyMode {
+		switch cfgNow().KittyMode {
 		case "kitty":
 			return true
 		case "default":

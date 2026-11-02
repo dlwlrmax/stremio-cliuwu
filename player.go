@@ -376,7 +376,7 @@ func (p *Player) sendAsync(fn func()) { go fn() }
 func mpvTitle(req PlayRequest) string {
 	e := req.Entry
 
-	mode := ctx.cfg.MpvTitle
+	mode := cfgNow().MpvTitle
 	if mode == "" || mode == "default" {
 		return ""
 	}
@@ -696,7 +696,7 @@ func (p *Player) maybeAutoSubtitle() {
 
 	// Snapshot the addon list: LoadAddons replaces it wholesale, and this
 	// goroutine has no lock under which to read the header.
-	addons := slices.Clone(ctx.addons)
+	addons := slices.Clone(ctx.Addons())
 	p.sendAsync(func() {
 		subs := MergeSubtitles(req.Subs, GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
 

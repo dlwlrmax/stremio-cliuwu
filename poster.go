@@ -382,8 +382,8 @@ func posterVariants(url string, biggest bool) []string {
 		// The configured quality first, then the rest largest-first as
 		// fallbacks in case metahub has nothing at that size.
 		want := "large"
-		if ctx != nil && ctx.cfg.PosterQuality != "" {
-			want = ctx.cfg.PosterQuality
+		if q := cfgNow().PosterQuality; q != "" {
+			want = q
 		}
 		sizes = []string{want}
 		for _, s := range []string{"large", "medium", "small"} {
@@ -441,7 +441,7 @@ func posterImg(url string) (*image.RGBA, bool) {
 
 // FetchPoster downloads and renders a poster. Safe to call from a goroutine.
 func FetchPoster(url string, maxW, maxH int) string {
-	if url == "" || !ctx.cfg.Posters {
+	if url == "" || !cfgNow().Posters {
 		return ""
 	}
 

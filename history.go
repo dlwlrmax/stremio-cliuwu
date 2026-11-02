@@ -34,8 +34,8 @@ const (
 // recentLimit is how many entries the history screen keeps. Watched state is
 // unbounded and lives separately — this only caps the list you browse.
 func recentLimit() int {
-	if ctx != nil && ctx.cfg.HistoryMax > 0 {
-		return ctx.cfg.HistoryMax
+	if n := cfgNow().HistoryMax; n > 0 {
+		return n
 	}
 	return defaultRecent
 }

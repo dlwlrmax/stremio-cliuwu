@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,6 +23,22 @@ type appCtx struct {
 	prog       *tea.Program
 
 	loading bool // manifests still being fetched
+
+	addonsMu sync.RWMutex // guards addons, which goroutines read while reloads replace it
+}
+
+// Addons returns the loaded addons. The slice is replaced wholesale on reload,
+// never edited, so holding on to it is safe.
+func (c *appCtx) Addons() []Addon {
+	c.addonsMu.RLock()
+	defer c.addonsMu.RUnlock()
+	return c.addons
+}
+
+func (c *appCtx) setAddons(a []Addon) {
+	c.addonsMu.Lock()
+	c.addons = a
+	c.addonsMu.Unlock()
 }
 
 var ctx *appCtx
@@ -29,7 +46,7 @@ var ctx *appCtx
 // StreamAddons returns addons that can actually serve streams.
 func (c *appCtx) StreamAddons() []Addon {
 	var out []Addon
-	for _, a := range c.addons {
+	for _, a := range c.Addons() {
 		if a.Err == nil && a.HasStreams() {
 			out = append(out, a)
 		}
@@ -247,7 +264,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, m.s.Init()
 
 	case addonsReadyMsg:
-		ctx.addons = m.Addons
+		ctx.setAddons(m.Addons)
 		ctx.loading = false
 		for _, sc := range a.stack {
 			if r, ok := sc.(rebuildable); ok {
@@ -292,7 +309,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case addonsReloadedMsg:
-		ctx.refs, ctx.addons = m.refs, m.addons
+		ctx.refs = m.refs
+		ctx.setAddons(m.addons)
 		// Cached results carry the ranks they were fetched with, so without
 		// this a reorder wouldn't take effect until the five minute TTL ran
 		// out — which reads as the reorder having done nothing.

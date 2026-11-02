@@ -156,7 +156,7 @@ func (p *infoPane) Show(m Meta) tea.Cmd {
 	if mediaType == "" {
 		mediaType = "movie"
 	}
-	addons := ctx.addons
+	addons := ctx.Addons()
 
 	return tea.Batch(
 		drop,

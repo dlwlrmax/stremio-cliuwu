@@ -178,7 +178,7 @@ func (s *menuScreen) rebuild() {
 	if ctx.loading {
 		s.entries = append(s.entries, menuEntry{head: "loading addons…"})
 	}
-	counts := KindsAvailable(ctx.addons)
+	counts := KindsAvailable(ctx.Addons())
 	for _, b := range []struct{ key, kind, label string }{
 		{"m", "movie", "movies"},
 		{"s", "show", "shows"},
@@ -200,7 +200,7 @@ func (s *menuScreen) rebuild() {
 		})
 	}
 
-	searchable := len(SearchCatalogs(ctx.addons))
+	searchable := len(SearchCatalogs(ctx.Addons()))
 	s.entries = append(s.entries,
 		menuEntry{key: "/", label: "search", sub: fmt.Sprintf("%d searchable catalog(s)", searchable),
 			open: func() tea.Cmd { return push(searchPrompt()) }},

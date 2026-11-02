@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 )
 
 func LoadConfig() AppConfig {
@@ -17,7 +18,31 @@ func LoadConfig() AppConfig {
 	return c
 }
 
-func SaveConfig(c AppConfig) error { return writeJSON(cfgFile(), c) }
+// cfgSnap is the config as of the last save, for goroutines.
+//
+// ctx.cfg is edited in place on the UI goroutine, which is fine there but a
+// data race for the poster fetchers, the download worker and the player's read
+// loop. They read this copy instead; SaveConfig, which every edit ends with,
+// refreshes it.
+var cfgSnap atomic.Pointer[AppConfig]
+
+func publishCfg(c AppConfig) { cfgSnap.Store(&c) }
+
+// cfgNow returns the last published config. Safe from any goroutine.
+func cfgNow() AppConfig {
+	if p := cfgSnap.Load(); p != nil {
+		return *p
+	}
+	if ctx != nil {
+		return ctx.cfg
+	}
+	return AppConfig{}
+}
+
+func SaveConfig(c AppConfig) error {
+	publishCfg(c)
+	return writeJSON(cfgFile(), c)
+}
 
 // detectMpv looks for an mpv binary in the usual places.
 func detectMpv() string {

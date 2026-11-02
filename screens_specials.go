@@ -65,7 +65,7 @@ func (s *specialsScreen) Footer() string {
 // OVA. The list renders immediately with derived names and no count, and
 // fills in once the real numbers arrive.
 func (s *specialsScreen) Init() tea.Cmd {
-	id, groups, addons := s.id, s.groups, ctx.addons
+	id, groups, addons := s.id, s.groups, ctx.Addons()
 
 	return func() tea.Msg {
 		names := map[string]string{}

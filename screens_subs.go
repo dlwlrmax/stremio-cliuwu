@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -45,6 +46,9 @@ func newSubsScreen(label string, q SubsQuery, shipped []Subtitle, showID string)
 
 	// Whatever came with the stream is already in hand, so it shows before
 	// any request goes out.
+	// Copied first: the same slice backs the play request, which the player
+	// reads from another goroutine.
+	shipped = slices.Clone(shipped)
 	for i := range shipped {
 		shipped[i].Addon = "stream"
 	}
@@ -65,7 +69,7 @@ func (s *subsScreen) SetSize(w, h int) {
 }
 
 func (s *subsScreen) Init() tea.Cmd {
-	id, q, addons := s.id, s.query, ctx.addons
+	id, q, addons := s.id, s.query, ctx.Addons()
 	shipped := s.subs
 
 	return tea.Batch(

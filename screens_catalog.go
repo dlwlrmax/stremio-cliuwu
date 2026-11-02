@@ -44,7 +44,7 @@ func (s *catalogPickerScreen) Footer() string {
 }
 
 func (s *catalogPickerScreen) rebuild() {
-	all := CatalogsOfKind(ctx.addons, s.kind)
+	all := CatalogsOfKind(ctx.Addons(), s.kind)
 
 	// Group by addon, with a section label per addon, but only when more than
 	// one addon contributes — otherwise the header is just noise.
@@ -257,7 +257,7 @@ func (s *catalogScreen) prefetchPosters() tea.Cmd {
 		}
 		metas = append(metas, s.metas[ai])
 	}
-	return prefetchCmd(&s.prefetching, ctx.addons, metas,
+	return prefetchCmd(&s.prefetching, ctx.Addons(), metas,
 		ctx.cfg.PosterSize, s.info.w, s.info.h, kittySupported(), ctx.cfg.Posters)
 }
 
@@ -620,13 +620,13 @@ func (s *searchScreen) prefetchPosters() tea.Cmd {
 		}
 		metas = append(metas, s.metas[s.shown[ai]])
 	}
-	return prefetchCmd(&s.prefetching, ctx.addons, metas,
+	return prefetchCmd(&s.prefetching, ctx.Addons(), metas,
 		ctx.cfg.PosterSize, s.info.w, s.info.h, kittySupported(), ctx.cfg.Posters)
 }
 
 func (s *searchScreen) Init() tea.Cmd {
 	id, q := s.id, s.query
-	addons := ctx.addons
+	addons := ctx.Addons()
 	return tea.Batch(
 		s.busy.start("searching…"),
 		func() tea.Msg { return searchMsg{id: id, metas: Search(addons, q)} },
@@ -803,7 +803,7 @@ func (s *searchScreen) View() string {
 	if !s.loaded {
 		return s.busy.view()
 	}
-	n := len(SearchCatalogs(ctx.addons))
+	n := len(SearchCatalogs(ctx.Addons()))
 	out := "  " + stSub.Render(fmt.Sprintf("%q across %d searchable catalog(s)", s.query, n)) + "\n"
 	if bar := s.catBar(); bar != "" {
 		out += bar + "\n"
@@ -815,7 +815,7 @@ func (s *searchScreen) View() string {
 }
 
 func searchPrompt() *promptScreen {
-	n := len(SearchCatalogs(ctx.addons))
+	n := len(SearchCatalogs(ctx.Addons()))
 	help := fmt.Sprintf("queries %d searchable catalog(s) from your addons", n)
 	if n == 0 {
 		help = "none of your addons expose a searchable catalog"
@@ -851,7 +851,7 @@ func openMeta(m Meta, season int) screen {
 // browseKind opens the catalogs for a menu bucket, skipping the picker when
 // there's only one catalog to pick.
 func browseKind(kind, title string) tea.Cmd {
-	refs := CatalogsOfKind(ctx.addons, kind)
+	refs := CatalogsOfKind(ctx.Addons(), kind)
 	switch len(refs) {
 	case 0:
 		return toastErr("no " + title + " catalogs — check your addons")

@@ -114,6 +114,7 @@ func main() {
 		}
 	}
 
+	publishCfg(cfg)
 	player := NewPlayer(cfg)
 	downloader := NewDownloader()
 	ctx = &appCtx{

@@ -251,7 +251,7 @@ func expandPattern(pattern string, vals map[string]string) []string {
 // A season pack keeps its layout rather than being flattened into one folder
 // of similarly-named files.
 func LibraryPath(root, pack, rel string) string {
-	if !ctx.cfg.DownloadFolders {
+	if !cfgNow().DownloadFolders {
 		return filepath.Join(root, safeName(baseName(rel)))
 	}
 
@@ -277,14 +277,14 @@ func DownloadPath(root string, t streamTarget, url string) string {
 		if name == "" {
 			name = t.Label
 		}
-		segs = expandPattern(ctx.cfg.MoviePattern, map[string]string{
+		segs = expandPattern(cfgNow().MoviePattern, map[string]string{
 			"title": name,
 			"year":  t.Meta.Year,
 		})
 	} else {
 		q := t.Queue
 		v := q.Episodes[q.Index]
-		segs = expandPattern(ctx.cfg.EpisodePattern, map[string]string{
+		segs = expandPattern(cfgNow().EpisodePattern, map[string]string{
 			"show":    q.Show.Name,
 			"season":  fmt.Sprintf("%02d", q.Season),
 			"episode": fmt.Sprintf("%02d", v.Episode),
@@ -296,7 +296,7 @@ func DownloadPath(root string, t streamTarget, url string) string {
 	if len(segs) == 0 {
 		segs = []string{"untitled"}
 	}
-	if !ctx.cfg.DownloadFolders {
+	if !cfgNow().DownloadFolders {
 		segs = segs[len(segs)-1:]
 	}
 	segs[len(segs)-1] += ext

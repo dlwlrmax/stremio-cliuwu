@@ -62,7 +62,7 @@ func (s *seasonScreen) Init() tea.Cmd {
 	return tea.Batch(
 		s.busy.start("fetching episode list…"),
 		func() tea.Msg {
-			sm := GetSeriesMeta(ctx.addons, m)
+			sm := GetSeriesMeta(ctx.Addons(), m)
 
 			// Season 0 is a real season — it's where specials, OVAs and
 			// recaps live. On a kitsu-backed series it opens a list of those
