@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"slices"
 	"sort"
@@ -330,7 +329,9 @@ func EpisodeStates(showID string) map[[2]int]EpState {
 	}
 	for k, e := range sh.Eps {
 		season, episode := parseEpKey(k)
-		if season <= 0 || episode <= 0 {
+		// Season 0 is the specials season and a real destination; only a film
+		// (0:0) has no episode to report.
+		if season < 0 || episode <= 0 {
 			continue
 		}
 		out[[2]int{season, episode}] = EpState{Position: e.P, Duration: e.D, Watched: e.W}
@@ -692,7 +693,7 @@ func watchedBitfield(showID string, sh *showState) string {
 	videos := make([]string, len(eps))
 	watched := map[string]bool{}
 	for i, oe := range eps {
-		v := fmt.Sprintf("%s:%d:%d", showID, oe[0], oe[1])
+		v := stremioVideoID(showID, oe[0], oe[1])
 		videos[i] = v
 		if st := sh.Eps[epKey(oe[0], oe[1])]; st != nil && st.W {
 			watched[v] = true

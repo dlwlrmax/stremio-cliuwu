@@ -122,7 +122,11 @@ func ShowHistoryItem(sh ShowSummary) Item {
 	return Item{Label: label, Sub: sub, Badge: badge}
 }
 
-func FavItem(f Favourite) Item {
+// FavItem renders a favourites row with the show's watch progress.
+//
+// recent is the history list, passed in so a screen full of favourites reads it
+// once rather than once per row.
+func FavItem(f Favourite, recent []HistoryEntry) Item {
 	yr := f.Year
 	if yr == "" {
 		yr = "?"
@@ -136,10 +140,9 @@ func FavItem(f Favourite) Item {
 	// Get watch progress from history
 	badge := kindTag(f.Source, f.Type) + season
 	if f.Type == "series" {
-		h := LoadHistory()
 		var lastEntry *HistoryEntry
-		for i := range h.Items {
-			e := &h.Items[i]
+		for i := range recent {
+			e := &recent[i]
 			if e.ID == f.ID {
 				if f.Season == 0 || e.Season == f.Season {
 					lastEntry = e

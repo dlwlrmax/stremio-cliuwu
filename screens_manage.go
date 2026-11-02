@@ -46,8 +46,9 @@ func (s *favsScreen) Footer() string {
 func (s *favsScreen) rebuild() {
 	s.favs = LoadFavs().Items
 	items := make([]Item, len(s.favs))
+	recent := LoadHistory().Items
 	for i, f := range s.favs {
-		items[i] = FavItem(f)
+		items[i] = FavItem(f, recent)
 	}
 	s.list.SetItems(items)
 }

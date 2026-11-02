@@ -280,7 +280,7 @@ func (e LocalLibraryEntry) toLibraryItem() libraryItem {
 	if e.Episode == 0 && e.Season == 0 {
 		typ, videoID = "movie", e.ID
 	} else {
-		videoID = fmt.Sprintf("%s:%d:%d", e.ID, e.Season, e.Episode)
+		videoID = stremioVideoID(e.ID, e.Season, e.Episode)
 	}
 
 	mtime := time.Unix(e.MTime, 0).UTC().Format(time.RFC3339)
@@ -325,7 +325,7 @@ func MergeLibrary(items []libraryItem) int {
 		key := "0:0"
 		season, episode := 0, 0
 		if it.Type == "series" {
-			s, e, ok := videoEpisode(it.State.VideoID)
+			s, e, ok := episodeOfVideoID(it.ID, it.State.VideoID)
 			if !ok {
 				continue // no usable episode pointer — nothing to record
 			}
@@ -424,27 +424,21 @@ func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mt
 			mark(eps[i][0], eps[i][1])
 		}
 	}
-	if s, e, ok := videoEpisode(anchorID); ok {
+	if s, e, ok := episodeOfVideoID(showID, anchorID); ok {
 		mark(s, e)
 	}
 }
 
 // anchorIndex finds the anchor video in the ordered episode list. Matched on
 // season and episode rather than the id string, which may be spelled
-// differently by the other side. -1 when it isn't there or isn't a
-// "<showID>:<season>:<episode>" id.
+// differently by the other side. -1 when it isn't there, or when the id isn't
+// one of this show's episode ids.
 func anchorIndex(showID, anchorID string, eps [][2]int) int {
-	rest, ok := strings.CutPrefix(anchorID, showID+":")
+	if !strings.HasPrefix(anchorID, showID+":") {
+		return -1
+	}
+	s, e, ok := episodeOfVideoID(showID, anchorID)
 	if !ok {
-		return -1
-	}
-	parts := strings.Split(rest, ":")
-	if len(parts) != 2 {
-		return -1
-	}
-	s, err1 := strconv.Atoi(parts[0])
-	e, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil {
 		return -1
 	}
 	for i, oe := range eps {
@@ -453,6 +447,42 @@ func anchorIndex(showID, anchorID string, eps [][2]int) int {
 		}
 	}
 	return -1
+}
+
+// stremioVideoID is the id Stremio gives an episode: "<showID>:<season>:<episode>",
+// except for Kitsu titles, whose single season is left out ("kitsu:1234:5").
+func stremioVideoID(showID string, season, episode int) string {
+	if strings.HasPrefix(showID, "kitsu:") && season == 1 {
+		return fmt.Sprintf("%s:%d", showID, episode)
+	}
+	return fmt.Sprintf("%s:%d:%d", showID, season, episode)
+}
+
+// episodeOfVideoID is the reverse of stremioVideoID. Knowing the show id lets
+// it tell "kitsu:1234:5" (episode 5) from "tt1:2:5" (season 2, episode 5); the
+// bare last-two-segments reading in videoEpisode takes the Kitsu id for a
+// season. An id that doesn't start with the show id falls back to that.
+func episodeOfVideoID(showID, videoID string) (int, int, bool) {
+	rest, ok := strings.CutPrefix(videoID, showID+":")
+	if !ok || showID == "" {
+		return videoEpisode(videoID)
+	}
+	parts := strings.Split(rest, ":")
+	switch len(parts) {
+	case 2:
+		s, err1 := strconv.Atoi(parts[0])
+		e, err2 := strconv.Atoi(parts[1])
+		if err1 == nil && err2 == nil && s >= 0 && e >= 0 {
+			return s, e, true
+		}
+	case 1:
+		if strings.HasPrefix(showID, "kitsu:") {
+			if e, err := strconv.Atoi(parts[0]); err == nil && e >= 0 {
+				return 1, e, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 // videoEpisode pulls (season, episode) out of a Stremio series videoId of the

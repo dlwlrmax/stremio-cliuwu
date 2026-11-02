@@ -62,6 +62,10 @@ type panelAction struct {
 
 func newContinuePanel() continuePanel { return continuePanel{} }
 
+// isFilmEntry tells a film from an episode. Season 0 alone doesn't: it is also
+// the specials season, so a film is the entry with no episode at all.
+func isFilmEntry(e HistoryEntry) bool { return e.Season <= 0 && e.Episode <= 0 }
+
 func (p *continuePanel) On() bool { return p.on }
 
 func (p *continuePanel) Toggle() {
@@ -153,7 +157,7 @@ func FetchTargetInfo(e HistoryEntry) tea.Cmd {
 		}
 
 		// A film has no episode to look up; it's the meta object itself.
-		if e.Season <= 0 {
+		if isFilmEntry(e) {
 			d, ok := GetMetaDetail(ctx.Addons(), "movie", e.ID, "")
 			if !ok {
 				return targetInfoMsg{}
@@ -354,7 +358,7 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 	// A film: title, the facts line, genres, synopsis. Everything the info
 	// panel shows down to the summary, and nothing after it — cast and
 	// awards are for when you've gone looking, not for a glance.
-	if e.Season <= 0 {
+	if isFilmEntry(e) {
 		d := p.epMovie
 		if p.epKey != targetKey(e) {
 			d = MetaDetail{} // fetch hasn't landed, or is for something else
