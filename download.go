@@ -164,6 +164,11 @@ func safeName(s string) string {
 		}
 		return r
 	}, s)
+	// A release name can run past the 255-byte filename limit once the
+	// extension is added. Cut by runes, then re-trim what the cut exposed.
+	if r := []rune(s); len(r) > 120 {
+		s = string(r[:120])
+	}
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, ".") // leading/trailing dots are stripped by Windows
 	if s == "" {
@@ -216,19 +221,23 @@ func tidySegment(s string) string {
 }
 
 func expandPattern(pattern string, vals map[string]string) []string {
-	out := pattern
+	// Split first, fill in after: a title like "Fate/Zero" must stay one
+	// folder name, not become two. One Replacer pass also means a value that
+	// happens to contain "{year}" is not expanded again.
+	pairs := make([]string, 0, len(vals)*2)
 	for k, v := range vals {
-		out = strings.ReplaceAll(out, "{"+k+"}", v)
+		pairs = append(pairs, "{"+k+"}", v)
 	}
+	fill := strings.NewReplacer(pairs...)
 
 	// Either separator: a Windows user will reach for a backslash, and
 	// letting it fall through to safeName would turn the folder break into a
 	// literal "-" in the filename.
 	var segs []string
-	for _, seg := range strings.FieldsFunc(out, func(r rune) bool {
+	for _, seg := range strings.FieldsFunc(pattern, func(r rune) bool {
 		return r == '/' || r == '\\'
 	}) {
-		if seg = tidySegment(seg); seg != "" {
+		if seg = tidySegment(fill.Replace(seg)); seg != "" {
 			segs = append(segs, safeName(seg))
 		}
 	}
@@ -817,11 +826,34 @@ func (d *Downloader) fetch(dl *Download) error {
 		offset = 0 // server ignored the range, start over
 	case http.StatusPartialContent:
 		// resuming
+	case http.StatusRequestedRangeNotSatisfiable:
+		// Asked to resume past the end. Either the .part is already the whole
+		// file (killed between the last byte and the rename), or it no longer
+		// matches what the server has.
+		var size int64
+		if _, err := fmt.Sscanf(res.Header.Get("Content-Range"), "bytes */%d", &size); err == nil && size > 0 && size == offset {
+			if err := os.Rename(part, dl.Path); err != nil {
+				return err
+			}
+			os.Remove(infoPath(dl.Path))
+			d.mu.Lock()
+			dl.Done, dl.Total = size, size
+			d.mu.Unlock()
+			return nil
+		}
+		os.Remove(part)
+		return errors.New("the partial file no longer matches the server — enter to start over")
 	case http.StatusForbidden, http.StatusUnauthorized:
 		// Debrid links are time-limited; a stale one looks exactly like this.
 		return fmt.Errorf("%s — the link may have expired, press R on the stream list to refetch", res.Status)
 	default:
 		return fmt.Errorf("server said %s", res.Status)
+	}
+
+	// Some hosts answer an expired link with a 200 and an error page. Saved
+	// as video it would look finished and then fail to play.
+	if ct := strings.ToLower(res.Header.Get("Content-Type")); strings.HasPrefix(ct, "text/") {
+		return fmt.Errorf("the server sent a web page (%s), not a video — the link may have expired", ct)
 	}
 
 	// ContentLength is -1 when the server doesn't say. Carrying that through
