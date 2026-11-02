@@ -9,6 +9,7 @@ import (
 	neturl "net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -36,7 +37,12 @@ func socketPath() string {
 	if runtime.GOOS == "windows" {
 		return `\\.\pipe\stremio-cliuwu`
 	}
-	return "/tmp/stremio-cliuwu.sock"
+	// Not a fixed name in shared /tmp: another local user could pre-create
+	// it, and a second account would attach to this one's mpv.
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		return filepath.Join(dir, "stremio-cliuwu.sock")
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("stremio-cliuwu-%d.sock", os.Getuid()))
 }
 
 var errNoMpv = errors.New("mpv is not running")
@@ -282,10 +288,10 @@ func (p *Player) spawn() error {
 		"--input-ipc-server=" + socketPath(),
 	}
 	if cfg.SubtitleLang != "" {
-		args = append(args, "--slang="+cfg.SubtitleLang)
+		args = append(args, "--slang="+mpvLangList(cfg.SubtitleLang))
 	}
 	if cfg.AudioLang != "" {
-		args = append(args, "--alang="+cfg.AudioLang)
+		args = append(args, "--alang="+mpvLangList(cfg.AudioLang))
 	}
 
 	cmd := exec.Command(bin, args...)
@@ -295,6 +301,18 @@ func (p *Player) spawn() error {
 	}
 	go cmd.Wait() // don't leave a zombie
 	return nil
+}
+
+// mpvLangList turns the settings text ("eng, en, English") into what mpv wants:
+// comma-separated items, which it does not trim itself.
+func mpvLangList(s string) string {
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 func (p *Player) readLoop(c net.Conn) {
@@ -704,7 +722,7 @@ func (p *Player) maybeAutoSubtitle() {
 			if !cfg.AutoSubtitle {
 				fallback = nil
 			}
-			p.autoSubtitleForShow(&req, subs, shipped, pref, fallback)
+			p.autoSubtitleForShow(gen, &req, subs, shipped, pref, fallback)
 			return
 		}
 
@@ -722,7 +740,7 @@ func (p *Player) maybeAutoSubtitle() {
 				if shipped[s.URL] || langName(s.Lang) != prefLang {
 					continue
 				}
-				if p.addSubtitle(s) {
+				if p.addSubtitle(gen, s) {
 					return
 				}
 			}
@@ -737,7 +755,7 @@ func (p *Player) maybeAutoSubtitle() {
 // tier tries its recorded source first and the other second; a language absent
 // from both sources falls through to the normal per-tier handling for the
 // remaining languages.
-func (p *Player) autoSubtitleForShow(req *PlayRequest, subs []Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
+func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
 	lang := pref.Lang
 
 	tiers := []string{lang}
@@ -749,7 +767,7 @@ func (p *Player) autoSubtitleForShow(req *PlayRequest, subs []Subtitle, shipped 
 
 	for i, tier := range tiers {
 		if i == 0 {
-			if p.loadShowTier(req, subs, shipped, tier, pref.Src) {
+			if p.loadShowTier(gen, req, subs, shipped, tier, pref.Src) {
 				return
 			}
 			continue
@@ -762,7 +780,7 @@ func (p *Player) autoSubtitleForShow(req *PlayRequest, subs []Subtitle, shipped 
 			if shipped[s.URL] || langName(s.Lang) != tier {
 				continue
 			}
-			if p.addSubtitle(s) {
+			if p.addSubtitle(gen, s) {
 				return
 			}
 		}
@@ -772,12 +790,12 @@ func (p *Player) autoSubtitleForShow(req *PlayRequest, subs []Subtitle, shipped 
 // loadShowTier loads the show's own language, trying the source the user picked
 // first and the other one after. A dead link fails inside mpv, so each
 // candidate is tried in turn.
-func (p *Player) loadShowTier(req *PlayRequest, subs []Subtitle, shipped map[string]bool, lang, src string) bool {
+func (p *Player) loadShowTier(gen uint64, req *PlayRequest, subs []Subtitle, shipped map[string]bool, lang, src string) bool {
 	embedded := func() bool {
 		// The track the user means by "embedded" is usually already in the
 		// file, and --slang is global, so a show language ranked low there
 		// wouldn't be selected on its own. Set sid explicitly.
-		if p.selectEmbeddedSub(lang) {
+		if p.selectEmbeddedSub(gen, lang) {
 			return true
 		}
 		// Otherwise a subtitle shipped with the stream is the next best
@@ -787,7 +805,7 @@ func (p *Player) loadShowTier(req *PlayRequest, subs []Subtitle, shipped map[str
 			if langName(s.Lang) != lang {
 				continue
 			}
-			if p.addSubtitle(s) {
+			if p.addSubtitle(gen, s) {
 				return true
 			}
 		}
@@ -799,7 +817,7 @@ func (p *Player) loadShowTier(req *PlayRequest, subs []Subtitle, shipped map[str
 			if shipped[s.URL] || langName(s.Lang) != lang {
 				continue
 			}
-			if p.addSubtitle(s) {
+			if p.addSubtitle(gen, s) {
 				return true
 			}
 		}
@@ -815,7 +833,10 @@ func (p *Player) loadShowTier(req *PlayRequest, subs []Subtitle, shipped map[str
 // selectEmbeddedSub picks the subtitle track already inside the file whose
 // language matches, by setting mpv's sid directly. Mirrors maybeAutoAudio's
 // track-list walk; any failure is silent so playback is never broken.
-func (p *Player) selectEmbeddedSub(lang string) bool {
+func (p *Player) selectEmbeddedSub(gen uint64, lang string) bool {
+	if !p.isCurrent(gen) {
+		return false
+	}
 	resp, err := p.command("get_property", "track-list")
 	if err != nil {
 		return false
@@ -848,7 +869,19 @@ func (p *Player) selectEmbeddedSub(lang string) bool {
 
 // addSubtitle loads a track and, on success, announces it. Shared by the
 // global and per-show autoloaders.
-func (p *Player) addSubtitle(s Subtitle) bool {
+// isCurrent reports whether the file that started an autoload is still the one
+// playing. A subtitle fetch or sub-add can outlast an episode change, and a
+// track added after it would attach to the wrong file.
+func (p *Player) isCurrent(gen uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.playGen == gen
+}
+
+func (p *Player) addSubtitle(gen uint64, s Subtitle) bool {
+	if !p.isCurrent(gen) {
+		return false
+	}
 	msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
 	if msg.Err != nil {
 		return false
@@ -972,8 +1005,13 @@ func (p *Player) onEndFile(reason string) {
 	// A `loadfile ... replace` makes mpv emit end-file/stop for the outgoing
 	// file. That is bookkeeping, not the end of playback — ignore it.
 	if p.replacing {
-		p.mu.Unlock()
-		return
+		if reason != "error" {
+			p.mu.Unlock()
+			return
+		}
+		// The outgoing file ends with "stop"; an error here is the new file
+		// failing to open, which never reaches file-loaded to clear this.
+		p.replacing = false
 	}
 	now := p.now
 	st := p.state
