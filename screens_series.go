@@ -98,7 +98,6 @@ func (s *seasonScreen) Footer() string {
 		[2]string{"i", "toggle info"},
 		[2]string{"f", "favourite show"},
 		[2]string{"w", "mark season watched"},
-		[2]string{"W", "mark whole season"},
 		[2]string{"p", "open full poster"},
 		[2]string{"I", "imdb"},
 		[2]string{"b/esc", "back"},

@@ -176,6 +176,7 @@ func (p *infoPane) ShowEpisode(show string, v Video) tea.Cmd {
 	}
 
 	p.forID = v.ID
+	p.id = newAsyncID() // a metaDetailMsg still in flight for the old target is now stale
 	p.ep = &v
 	p.epShow = show
 	p.detail = MetaDetail{}

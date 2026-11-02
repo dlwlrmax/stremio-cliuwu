@@ -112,7 +112,10 @@ func (s *promptScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "esc":
 			return s, pop()
 		case "enter":
-			v := strings.TrimSpace(s.ti.Value())
+			v := s.ti.Value()
+			if s.ti.EchoMode == textinput.EchoNormal {
+				v = strings.TrimSpace(v) // a pasted URL or path; a password stays as typed
+			}
 			// Sequence, not Batch: Batch runs commands concurrently, so a
 			// push from onDone could land before this pop and get torn
 			// straight back off the stack.

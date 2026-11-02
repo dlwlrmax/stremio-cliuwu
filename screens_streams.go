@@ -492,12 +492,14 @@ func (s *streamScreen) queue(st Stream) tea.Cmd {
 		return toastErr("that stream has no url")
 	}
 
-	req := s.request(st, 0)
-	if q := ctx.player.Queued(); q != nil && q.VideoID == req.VideoID && q.URL == req.URL {
+	// Checked before building the request: request() records the release as
+	// the show's binge group, which taking a stream off the queue shouldn't do.
+	if q := ctx.player.Queued(); q != nil && q.VideoID == s.target.VideoID && q.URL == st.URL {
 		ctx.player.Unqueue()
 		return tea.Batch(toast("removed from up next"), playerStateCmd())
 	}
 
+	req := s.request(st, 0)
 	ctx.player.Queue(req)
 	return tea.Batch(toast("up next — "+req.Label), playerStateCmd())
 }
@@ -584,12 +586,16 @@ func nextEpisodeTarget(prev PlayRequest) (streamTarget, bool) {
 		q.Index++
 	}
 
+	// Same as hop(): an episode you'd half watched offers to resume.
+	pos, _, _ := GetPositionByEpisode(q.Show.ID, v.Season, v.Episode)
+
 	return streamTarget{
 		Meta:      q.Show,
 		MediaType: "series",
 		VideoID:   v.ID,
 		StreamID:  v.StreamID(),
 		Label:     q.Show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
+		Resume:    pos,
 		Queue:     &q,
 	}, true
 }

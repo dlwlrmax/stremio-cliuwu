@@ -87,7 +87,7 @@ func (s *subsScreen) Footer() string {
 	if s.showID != "" {
 		pairs = append(pairs, [2]string{"c", "use global"})
 	}
-	pairs = append(pairs, [2]string{"R", "refetch streams"}, [2]string{"/", "filter"},
+	pairs = append(pairs, [2]string{"R", "refetch subtitles"}, [2]string{"/", "filter"},
 		[2]string{"b/esc", "back"})
 	return withStatus(s.list.Status(), keyHint(pairs...))
 }

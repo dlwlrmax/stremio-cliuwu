@@ -199,6 +199,10 @@ type catalogScreen struct {
 	loaded      bool
 	loadingMore bool
 
+	// awaitingGenre: the catalog won't load without a genre and none has been
+	// chosen yet. Backing out of the picker leaves the screen in this state.
+	awaitingGenre bool
+
 	// prefetching is set while a poster-prefetch goroutine runs, so cursor
 	// moves during it don't pile up further prefetch work.
 	prefetching atomic.Bool
@@ -313,6 +317,7 @@ func (s *catalogScreen) Init() tea.Cmd {
 	// Some addons won't serve a catalog at all without a genre, so ask before
 	// firing off a request that can only fail.
 	if s.ref.NeedsGenre && s.genre == "" && len(s.ref.Genres) > 0 {
+		s.awaitingGenre = true
 		return push(newGenrePicker(s.ref, func(g string) tea.Cmd {
 			return s.setGenre(g)
 		}))
@@ -331,6 +336,7 @@ func (s *catalogScreen) setGenre(g string) tea.Cmd {
 func (s *catalogScreen) loadPage(skip int) tea.Cmd {
 	s.id = newAsyncID()
 	s.loadingMore = skip > 0
+	s.awaitingGenre = false
 	id, ref, genre := s.id, s.ref, s.genre
 	what := ref.Name
 	if genre != "" {
@@ -432,6 +438,9 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.busy.stop()
 		s.loaded = true
 		if m.err != nil {
+			// Not left set: a failed load-more would otherwise block enter and
+			// auto-load from ever asking again.
+			s.loadingMore = false
 			return s, toastErr(m.err.Error())
 		}
 		was := len(s.metas)
@@ -515,6 +524,9 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 func (s *catalogScreen) View() string {
 	if !s.loaded {
+		if s.awaitingGenre {
+			return "\n  " + stHint.Render("this catalog needs a genre — g to choose, esc to go back")
+		}
 		return s.busy.view()
 	}
 	what := s.ref.AddonName

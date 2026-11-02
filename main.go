@@ -94,8 +94,11 @@ func main() {
 	cfg := LoadConfig()
 	applyAccent(cfg.Accent)
 	if cfg.MpvPath == "" {
-		cfg.MpvPath = detectMpv()
-		SaveConfig(cfg)
+		// Only worth writing once something was found; otherwise every launch
+		// without mpv rewrites the config for nothing.
+		if cfg.MpvPath = detectMpv(); cfg.MpvPath != "" {
+			SaveConfig(cfg)
+		}
 	}
 
 	// First run: no addons.json yet, so seed the two metadata addons. Stream
@@ -122,7 +125,7 @@ func main() {
 	}
 
 	model := newApp(newMenuScreen())
-	model.setStartup(startupCmd(opts))
+	model.setStartup(func() tea.Cmd { return startupCmd(opts) })
 
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	ctx.prog = prog
@@ -134,7 +137,11 @@ func main() {
 	// LoadAddons waits for every one of them, and the http client allows
 	// fifteen seconds — so a single unresponsive addon held the whole launch.
 	// This is a background goroutine, which is what Send is for.
-	go prog.Send(addonsReadyMsg{Addons: LoadAddons(refs)})
+	//
+	// The call has to sit inside the closure: arguments of a bare
+	// `go f(g())` are evaluated by the caller, which would run LoadAddons on
+	// this goroutine before the program ever started.
+	go func() { prog.Send(addonsReadyMsg{Addons: LoadAddons(refs)}) }()
 
 	// Index only — no folder walk at startup. R on the downloads screen
 	// rescans when the index and the disk have drifted apart.

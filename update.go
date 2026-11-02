@@ -35,6 +35,7 @@ var (
 	updateCache  updateInfo
 	updateAt     time.Time
 	updateTTL    = 6 * time.Hour
+	updateRetry  = 5 * time.Minute // how long a failed check is trusted
 	updateLoaded bool
 )
 
@@ -62,8 +63,10 @@ func CheckUpdate() tea.Cmd {
 		}
 
 		info := updateInfo{}
+		ok := false
 		if err := getJSONTimeout(releasesURL, &resp, 8*time.Second); err == nil &&
 			resp.TagName != "" && !resp.Draft {
+			ok = true
 			info = updateInfo{
 				State:  compareVersions(version, resp.TagName),
 				Latest: resp.TagName,
@@ -71,8 +74,14 @@ func CheckUpdate() tea.Cmd {
 			}
 		}
 
+		// A failed check is only remembered briefly. Caching it for the full
+		// TTL meant one dropped connection hid updates for six hours.
+		at := time.Now()
+		if !ok {
+			at = at.Add(updateRetry - updateTTL)
+		}
 		updateMu.Lock()
-		updateCache, updateAt, updateLoaded = info, time.Now(), true
+		updateCache, updateAt, updateLoaded = info, at, true
 		updateMu.Unlock()
 
 		return updateCheckedMsg{Info: info}

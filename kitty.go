@@ -108,7 +108,9 @@ func kittyDetect() bool {
 	// inherits that variable and never clears it, so WezTerm started inside
 	// kitty claims to be kitty. A terminal that names itself is the better
 	// authority than one that merely inherited a variable.
-	if tp := strings.ToLower(os.Getenv("TERM_PROGRAM")); tp != "" {
+	// tmux names itself here too, but says nothing about the terminal behind
+	// it, so that case falls through to the tmux query below.
+	if tp := strings.ToLower(os.Getenv("TERM_PROGRAM")); tp != "" && tp != "tmux" {
 		for _, sub := range []string{"kitty", "ghostty"} {
 			if strings.Contains(tp, sub) {
 				return true

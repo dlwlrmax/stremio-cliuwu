@@ -222,7 +222,6 @@ func (s *fileListScreen) SetSize(w, h int) {
 func (s *fileListScreen) Footer() string {
 	pairs := [][2]string{
 		{"enter", "play"},
-		{"/", "filter"},
 		{"0-9", "jump to row"},
 	}
 	if ctx.player.State().Alive {

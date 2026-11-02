@@ -285,7 +285,11 @@ func Search(addons []Addon, query string) []Meta {
 		}
 	}
 
-	cacheSearch.Set(key, merged)
+	// Likewise an empty search: a failed fan-out looks the same, and the
+	// retry the user makes right away should actually go out.
+	if len(merged) > 0 {
+		cacheSearch.Set(key, merged)
+	}
 	return merged
 }
 
@@ -516,9 +520,10 @@ func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
 		return resp.Meta
 	}
 
-	empty := SeriesMeta{}
-	cacheSeries.Set(m.ID, empty)
-	return empty
+	// Not cached: an empty result here is as likely a network blip as a show
+	// with no episodes, and remembering it kept a show unopenable for the
+	// whole TTL.
+	return SeriesMeta{}
 }
 
 // GetSeasonEpisodes returns sorted episodes for a season, enriched from OMDB

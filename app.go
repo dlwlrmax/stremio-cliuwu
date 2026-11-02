@@ -75,6 +75,13 @@ type toastMsg struct {
 type toastExpireMsg struct{ at time.Time }
 type reloadAddonsMsg struct{}
 
+// addonsReloadedMsg carries a finished reload back to the UI goroutine, which
+// is the only place ctx.refs and ctx.addons are written.
+type addonsReloadedMsg struct {
+	refs   AddonList
+	addons []Addon
+}
+
 // themeChangedMsg forces every screen to re-render its rows.
 //
 // Screens bake styled text into Item.Label when they build their list, so
@@ -123,23 +130,22 @@ type app struct {
 	toastErr  bool
 	toastAt   time.Time
 
-	startup tea.Cmd
+	startup func() tea.Cmd
 }
 
 func newApp(root screen) *app { return &app{stack: []screen{root}} }
 
 // startup runs once the program is up: used to jump straight to a search or a
 // catalog from the command line.
-func (a *app) setStartup(cmd tea.Cmd) { a.startup = cmd }
+//
+// It is a function because the screens it opens read the installed addons,
+// which are not loaded until addonsReadyMsg: built any earlier, "-m" found no
+// catalogs and "-s" searched nothing.
+func (a *app) setStartup(f func() tea.Cmd) { a.startup = f }
 
 func (a *app) top() screen { return a.stack[len(a.stack)-1] }
 
-func (a *app) Init() tea.Cmd {
-	if a.startup != nil {
-		return tea.Batch(a.top().Init(), a.startup)
-	}
-	return a.top().Init()
-}
+func (a *app) Init() tea.Cmd { return a.top().Init() }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
@@ -252,6 +258,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the addons existed got nothing back, and needs telling to try again.
 		next, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = next
+		if a.startup != nil {
+			start := a.startup
+			a.startup = nil
+			cmd = tea.Batch(cmd, start())
+		}
 		return a, cmd
 
 	case themeChangedMsg:
@@ -274,8 +285,14 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.refreshTop()
 
 	case reloadAddonsMsg:
-		ctx.refs = LoadAddonRefs()
-		ctx.addons = LoadAddons(ctx.refs)
+		// Fetching manifests takes seconds; doing it here froze the whole UI.
+		return a, func() tea.Msg {
+			refs := LoadAddonRefs()
+			return addonsReloadedMsg{refs: refs, addons: LoadAddons(refs)}
+		}
+
+	case addonsReloadedMsg:
+		ctx.refs, ctx.addons = m.refs, m.addons
 		// Cached results carry the ranks they were fetched with, so without
 		// this a reorder wouldn't take effect until the five minute TTL ran
 		// out — which reads as the reorder having done nothing.
