@@ -1140,6 +1140,20 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 		p.command("set_property", "force-media-title", "")
 	}
 
+	// Track selection is sticky in mpv: switching subtitles off with the sid
+	// property changes the option itself, so every later file starts with
+	// them off too, whatever show it belongs to. Say what this one should
+	// start with. "no" for a show left with subtitles off, so they never
+	// flash on before the autoloader runs; "auto" otherwise, which restores
+	// --slang selection.
+	sidMode := "auto"
+	if req.MediaType == "series" && req.Queue != nil {
+		if pref, ok := GetSubPref(req.Entry.ID); ok && pref.Lang == subOff {
+			sidMode = "no"
+		}
+	}
+	p.command("set_property", "sid", sidMode)
+
 	if _, err := p.command("loadfile", req.URL, "replace"); err != nil {
 		p.mu.Lock()
 		p.replacing = false
