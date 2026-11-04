@@ -1,4 +1,4 @@
-package main
+package player
 
 import (
 	"fmt"
@@ -76,8 +76,7 @@ func itSetup(t *testing.T) *itEnv {
 	os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+real+" \"$@\" --vo=null --ao=null --force-window=no\n"), 0755)
 
 	cfg := store.AppConfig{MpvPath: wrap, SubtitleLang: "eng, en, English", AutoSubtitle: true}
-	p := NewPlayer(cfg)
-	ctx = &appCtx{cfg: cfg, player: p}
+	p := New(cfg)
 	store.PublishCfg(cfg)
 	store.LoadSubPrefs()
 	store.Hist = &store.HistoryStore{}
@@ -144,7 +143,7 @@ func TestIntegrationSubsOffIsRememberedPerShow(t *testing.T) {
 
 	if msg := e.p.play(seriesReq(e.vid, "ttA", 1)); msg == nil {
 		t.Fatal("play returned nothing")
-	} else if err, ok := msg.(PlayerErrMsg); ok {
+	} else if err, ok := msg.(ErrMsg); ok {
 		t.Fatal(err.Err)
 	}
 	e.loaded(t)
@@ -199,11 +198,11 @@ func TestIntegrationBadURLSurfacesError(t *testing.T) {
 	for {
 		select {
 		case m := <-e.msgs:
-			if _, ok := m.(PlayerErrMsg); ok {
+			if _, ok := m.(ErrMsg); ok {
 				return
 			}
 		case <-deadline:
-			t.Fatal("no PlayerErrMsg for a file mpv cannot open")
+			t.Fatal("no ErrMsg for a file mpv cannot open")
 		}
 	}
 }
@@ -247,8 +246,8 @@ func itTwoTracks(t *testing.T) string {
 	return itTracks(t, itTrack{"eng", ""}, itTrack{"fre", ""})
 }
 
-// itFakeSubAddon installs a subtitle addon that offers one track in lang.
-func itFakeSubAddon(t *testing.T, lang string, delay time.Duration) {
+// fakeSubAddon installs a subtitle addon that offers one track in lang.
+func (e *itEnv) fakeSubAddon(t *testing.T, lang string, delay time.Duration) {
 	t.Helper()
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
@@ -260,13 +259,14 @@ func itFakeSubAddon(t *testing.T, lang string, delay time.Duration) {
 		time.Sleep(delay)
 		fmt.Fprintf(w, `{"subtitles":[{"id":"p1","url":%q,"lang":%q}]}`, srv.URL+"/sub.srt", lang)
 	})
-	ctx.setAddons([]stremio.Addon{{
+	addons := []stremio.Addon{{
 		TransportURL: srv.URL + "/manifest.json",
 		Manifest: stremio.Manifest{
 			ID: "fake.subs", Name: "fake", Types: []string{"series"},
 			Resources: []any{"subtitles"},
 		},
-	}})
+	}}
+	e.p.SetAddons(func() []stremio.Addon { return addons })
 }
 
 // externalSubs counts subtitle tracks mpv has that are not inside the file.
@@ -321,7 +321,7 @@ func TestIntegrationHandPickedEmbeddedTrackCarriesToNextEpisode(t *testing.T) {
 func TestIntegrationSavedLanguagePrefersEmbeddedOverPlugin(t *testing.T) {
 	e := itSetup(t)
 	two := itTwoTracks(t)
-	itFakeSubAddon(t, "fre", 0)
+	e.fakeSubAddon(t, "fre", 0)
 	store.SetSubPref("ttF", "French", "plugin")
 
 	e.p.play(seriesReq(two, "ttF", 2))
@@ -342,7 +342,7 @@ func TestIntegrationSavedLanguagePrefersEmbeddedOverPlugin(t *testing.T) {
 func TestIntegrationSavedLanguageFallsBackToPlugin(t *testing.T) {
 	e := itSetup(t)
 	two := itTwoTracks(t)
-	itFakeSubAddon(t, "spa", 0)
+	e.fakeSubAddon(t, "spa", 0)
 	store.SetSubPref("ttG", "Spanish", "embedded")
 
 	e.p.play(seriesReq(two, "ttG", 2))
@@ -357,7 +357,7 @@ func TestIntegrationSavedLanguageFallsBackToPlugin(t *testing.T) {
 func TestIntegrationEmbeddedAppliesBeforeAddonsAnswer(t *testing.T) {
 	e := itSetup(t)
 	two := itTwoTracks(t)
-	itFakeSubAddon(t, "fre", 6*time.Second)
+	e.fakeSubAddon(t, "fre", 6*time.Second)
 	store.SetSubPref("ttH", "French", "embedded")
 
 	e.p.play(seriesReq(two, "ttH", 2))

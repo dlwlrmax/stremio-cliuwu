@@ -5,6 +5,7 @@ import (
 	"sort"
 	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/streams"
@@ -435,7 +436,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 // request builds the play request for a stream. Shared by launch and queue so
 // the two can't drift — a queued episode has to record exactly the same
 // history and episode context as one played directly.
-func (s *streamScreen) request(st stremio.Stream, resume float64) PlayRequest {
+func (s *streamScreen) request(st stremio.Stream, resume float64) player.PlayRequest {
 	t := s.target
 
 	entry := store.HistoryEntry{
@@ -466,7 +467,7 @@ func (s *streamScreen) request(st stremio.Stream, resume float64) PlayRequest {
 		store.SetBinge(t.Meta.ID, st.BehaviorHints.BingeGroup)
 	}
 
-	return PlayRequest{
+	return player.PlayRequest{
 		VideoID:   t.VideoID,
 		MediaType: t.MediaType,
 		Label:     t.Label,
@@ -569,7 +570,7 @@ func (s *streamScreen) toggleWatched() tea.Cmd {
 
 // nextEpisodeTarget advances a finished request's queue by one, continuing
 // into the next season when the current one is done.
-func nextEpisodeTarget(prev PlayRequest) (streamTarget, bool) {
+func nextEpisodeTarget(prev player.PlayRequest) (streamTarget, bool) {
 	v, season, ok := prev.Queue.Next()
 	if !ok {
 		return streamTarget{}, false

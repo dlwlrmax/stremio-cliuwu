@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 
@@ -231,7 +232,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.rebuild()
 		return s, nil
 
-	case SubtitleAddedMsg:
+	case player.SubtitleAddedMsg:
 		if m.Err != nil {
 			return s, toastErr("mpv couldn't load that one — try another")
 		}

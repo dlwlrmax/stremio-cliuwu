@@ -1,4 +1,4 @@
-package main
+package player
 
 import (
 	"stremio-cliuwu/internal/stremio"

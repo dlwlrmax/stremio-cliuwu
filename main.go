@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -119,7 +120,7 @@ func main() {
 	}
 
 	store.PublishCfg(cfg)
-	player := NewPlayer(cfg)
+	player := player.New(cfg)
 	downloader := download.New()
 	ctx = &appCtx{
 		cfg:        cfg,
@@ -135,6 +136,7 @@ func main() {
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	ctx.prog = prog
 	player.Attach(prog)
+	player.SetAddons(ctx.Addons)
 	downloader.Attach(prog)
 
 	// Manifests are fetched after the UI is up, not before it.

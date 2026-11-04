@@ -1,4 +1,4 @@
-package main
+package player
 
 import (
 	"bufio"
@@ -54,9 +54,9 @@ var errNoMpv = errors.New("mpv is not running")
 
 // ── Messages into the Bubble Tea program ──────────────────────────────────────
 
-type PlayerStateMsg struct{ State PlayerState }
-type PlayerNoticeMsg struct{ Text string }
-type PlayerErrMsg struct{ Err error }
+type StateMsg struct{ State State }
+type NoticeMsg struct{ Text string }
+type ErrMsg struct{ Err error }
 
 // EpisodeEndedMsg fires when a queued episode plays to its end. The player
 // deliberately does not pick the next stream itself: it can't tell a cached
@@ -74,7 +74,7 @@ type PrefetchNextMsg struct{ Prev PlayRequest }
 // How far before the end to look ahead is worked out from the runtime — see
 // prefetchLead. A flat fraction fired 37 minutes early on a long film.
 
-type PlayerState struct {
+type State struct {
 	Alive     bool
 	Loading   bool
 	Buffering bool
@@ -89,14 +89,14 @@ type PlayerState struct {
 	QueueLen  int
 }
 
-func (s PlayerState) Frac() float64 {
+func (s State) Frac() float64 {
 	if s.Duration <= 0 {
 		return 0
 	}
 	return s.Pos / s.Duration
 }
 
-func (s PlayerState) Percent() float64 { return s.Frac() * 100 }
+func (s State) Percent() float64 { return s.Frac() * 100 }
 
 // ── Play request ──────────────────────────────────────────────────────────────
 
@@ -128,31 +128,47 @@ type Player struct {
 	conn    net.Conn
 	pending map[uint32]chan map[string]any
 	now     *PlayRequest
-	state   PlayerState
+	state   State
 	seq     uint32
 
 	wmu sync.Mutex // serialises writes to conn
 
-	queued     *PlayRequest // plays automatically when the current file ends
-	replacing  bool         // suppress the end-file/stop that a replace generates
-	prefetched bool         // next episode already surfaced for this request
-	autoSubbed bool         // subtitle autoload already attempted for this request
-	subSeen    bool         // a subtitle track was active in the current file
-	loadedAt   time.Time    // when the current file finished loading
-	ownSid     int          // track id we just selected ourselves; 0 for none
-	ownSidTill time.Time    // after this, ownSid no longer excuses a change
-	pickSeq    uint64       // bumped by each subtitle-track pick or off; newest wins
-	playGen    uint64       // bumped on every play(); stale subtitle fetches drop out
-	seekTo     float64      // pending resume seek, applied on file-loaded
-	lastSave   time.Time    // throttles history writes
-	lastEmit   int          // last whole second pushed to the UI
+	queued     *PlayRequest           // plays automatically when the current file ends
+	replacing  bool                   // suppress the end-file/stop that a replace generates
+	prefetched bool                   // next episode already surfaced for this request
+	autoSubbed bool                   // subtitle autoload already attempted for this request
+	subSeen    bool                   // a subtitle track was active in the current file
+	loadedAt   time.Time              // when the current file finished loading
+	ownSid     int                    // track id we just selected ourselves; 0 for none
+	ownSidTill time.Time              // after this, ownSid no longer excuses a change
+	pickSeq    uint64                 // bumped by each subtitle-track pick or off; newest wins
+	addonsFn   func() []stremio.Addon // where the subtitle addons come from; set by SetAddons
+	playGen    uint64                 // bumped on every play(); stale subtitle fetches drop out
+	seekTo     float64                // pending resume seek, applied on file-loaded
+	lastSave   time.Time              // throttles history writes
+	lastEmit   int                    // last whole second pushed to the UI
 }
 
-func NewPlayer(cfg store.AppConfig) *Player {
+func New(cfg store.AppConfig) *Player {
 	return &Player{cfg: cfg, pending: map[uint32]chan map[string]any{}}
 }
 
-func (p *Player) Attach(prog *tea.Program)      { p.prog = prog }
+func (p *Player) Attach(prog *tea.Program) { p.prog = prog }
+
+// SetAddons tells the player where to find the addons it may ask for
+// subtitles. A function rather than a slice: the app replaces its addon list
+// wholesale on reload, and the player should always see the current one.
+func (p *Player) SetAddons(fn func() []stremio.Addon) { p.mu.Lock(); p.addonsFn = fn; p.mu.Unlock() }
+
+func (p *Player) currentAddons() []stremio.Addon {
+	p.mu.Lock()
+	fn := p.addonsFn
+	p.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
 func (p *Player) SetConfig(cfg store.AppConfig) { p.mu.Lock(); p.cfg = cfg; p.mu.Unlock() }
 
 func (p *Player) emit(msg tea.Msg) {
@@ -161,7 +177,7 @@ func (p *Player) emit(msg tea.Msg) {
 	}
 }
 
-func (p *Player) State() PlayerState {
+func (p *Player) State() State {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.state
@@ -354,7 +370,7 @@ func (p *Player) gone() {
 	now := p.now
 	st := p.state
 	p.now = nil
-	p.state = PlayerState{}
+	p.state = State{}
 
 	// Nothing left to follow. Left set, it would suppress the next-episode
 	// picker for the rest of the session — Queued() being non-nil is what
@@ -365,7 +381,7 @@ func (p *Player) gone() {
 	if now != nil && st.Duration > 0 && st.Pos > 0 {
 		store.UpdatePosition(now.VideoID, st.Pos, st.Duration)
 	}
-	p.emit(PlayerStateMsg{})
+	p.emit(StateMsg{})
 }
 
 // sendAsync runs IPC work off the read loop.
@@ -619,7 +635,7 @@ func (p *Player) onProperty(name string, data any) {
 		p.emit(PrefetchNextMsg{Prev: *now})
 	}
 	if repaint {
-		p.emit(PlayerStateMsg{State: st})
+		p.emit(StateMsg{State: st})
 	}
 }
 
@@ -648,7 +664,7 @@ func (p *Player) onFileLoaded() {
 	p.maybeAutoSubtitle()
 	p.maybeAutoAudio()
 
-	p.emit(PlayerStateMsg{State: st})
+	p.emit(StateMsg{State: st})
 }
 
 // maybeAutoSubtitle loads a preferred-language subtitle for the file that just
@@ -724,7 +740,7 @@ func (p *Player) maybeAutoSubtitle() {
 
 	// Snapshot the addon list: LoadAddons replaces it wholesale, and this
 	// goroutine has no lock under which to read the header.
-	addons := slices.Clone(ctx.Addons())
+	addons := slices.Clone(p.currentAddons())
 	p.sendAsync(func() {
 		// What is already in the file needs no network, so it goes first: the
 		// show's language shouldn't wait on the slowest subtitle addon while
@@ -892,7 +908,7 @@ func (p *Player) selectEmbeddedSub(gen uint64, lang, title string) bool {
 			return false
 		}
 	}
-	p.emit(PlayerNoticeMsg{Text: "subtitles: " + lang + " · embedded"})
+	p.emit(NoticeMsg{Text: "subtitles: " + lang + " · embedded"})
 	return true
 }
 
@@ -1024,7 +1040,7 @@ func (p *Player) addSubtitle(gen uint64, s stremio.Subtitle) bool {
 	if s.Addon != "" {
 		notice += " via " + s.Addon
 	}
-	p.emit(PlayerNoticeMsg{Text: notice})
+	p.emit(NoticeMsg{Text: notice})
 	p.emit(msg)
 	return true
 }
@@ -1205,12 +1221,12 @@ func (p *Player) onEndFile(reason string) {
 		if prefetched {
 			return // the next episode's stream list is already open
 		}
-		p.emit(PlayerNoticeMsg{Text: "finished — " + now.Label})
+		p.emit(NoticeMsg{Text: "finished — " + now.Label})
 	case "error":
 		// Deliberately doesn't skip ahead: a failure here means this stream is
 		// bad, so what you want is a different stream for the same episode,
 		// which is where you already are.
-		p.emit(PlayerErrMsg{Err: errors.New("mpv couldn't play that stream — R to refetch, or pick another")})
+		p.emit(ErrMsg{Err: errors.New("mpv couldn't play that stream — R to refetch, or pick another")})
 	default:
 		if st.Duration > 0 && st.Pos > 0 {
 			store.UpdatePosition(now.VideoID, st.Pos, st.Duration)
@@ -1231,7 +1247,7 @@ func (p *Player) Play(req PlayRequest) tea.Cmd {
 
 func (p *Player) play(req PlayRequest) tea.Msg {
 	if err := p.connect(); err != nil {
-		return PlayerErrMsg{Err: err}
+		return ErrMsg{Err: err}
 	}
 
 	// Flush the outgoing item's position before we lose track of it.
@@ -1247,7 +1263,7 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	p.queued = nil // choosing something now supersedes whatever was lined up
 	p.now = &req
 	p.seekTo = req.Resume
-	p.state = PlayerState{
+	p.state = State{
 		Alive:   true,
 		Loading: true,
 		Label:   req.Label,
@@ -1295,9 +1311,9 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 		p.replacing = false
 		p.state.Loading = false
 		p.mu.Unlock()
-		return PlayerErrMsg{Err: err}
+		return ErrMsg{Err: err}
 	}
-	return PlayerStateMsg{State: st}
+	return StateMsg{State: st}
 }
 
 // Stop quits mpv outright. `stop` alone leaves the window sitting there when
@@ -1308,7 +1324,7 @@ func (p *Player) Stop() tea.Cmd {
 		now, st := p.now, p.state
 		autoSync := p.cfg.AutoSync
 		p.now = nil
-		p.state = PlayerState{Alive: st.Alive}
+		p.state = State{Alive: st.Alive}
 		p.mu.Unlock()
 
 		if now != nil && st.Duration > 0 && st.Pos > 0 {
@@ -1319,7 +1335,7 @@ func (p *Player) Stop() tea.Cmd {
 			p.sendAsync(store.AutoSyncPush)
 		}
 		p.command("quit")
-		return PlayerStateMsg{}
+		return StateMsg{}
 	}
 }
 
@@ -1328,7 +1344,7 @@ func (p *Player) Stop() tea.Cmd {
 func (p *Player) Resume() tea.Cmd {
 	return func() tea.Msg {
 		if _, err := p.command("set_property", "pause", false); err != nil {
-			return PlayerErrMsg{Err: err}
+			return ErrMsg{Err: err}
 		}
 		return nil
 	}

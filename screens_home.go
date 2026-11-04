@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -281,7 +282,7 @@ func (s *menuScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, nil
 
-	case PlayerStateMsg:
+	case player.StateMsg:
 		cur := s.list.Selected()
 		s.rebuild()
 		if cur >= 0 {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
@@ -209,7 +210,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, s.syncInfo()
 
-	case PlayerStateMsg:
+	case player.StateMsg:
 		if s.loaded {
 			cur := s.list.Selected()
 			s.rebuild()
@@ -454,7 +455,7 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.list.Focus(s.firstUnwatched())
 		return s, s.syncInfo()
 
-	case PlayerStateMsg:
+	case player.StateMsg:
 		if s.loaded {
 			cur := s.list.Selected()
 			s.rebuild()

@@ -6,6 +6,7 @@ import (
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -164,7 +165,7 @@ func (s *historyScreen) rebuild() {
 }
 
 func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
-	if _, ok := msg.(PlayerStateMsg); ok {
+	if _, ok := msg.(player.StateMsg); ok {
 		cur := s.list.Selected()
 		s.rebuild()
 		if cur >= 0 {

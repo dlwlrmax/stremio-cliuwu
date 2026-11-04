@@ -6,6 +6,7 @@ import (
 	"sort"
 	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -254,7 +255,7 @@ type fileRow struct {
 // The index doubles as the episode number: files here have no season or
 // episode of their own, and without something to tell them apart they'd all
 // collide on the same key under the entry.
-func (s *fileListScreen) request(idx int) PlayRequest {
+func (s *fileListScreen) request(idx int) player.PlayRequest {
 	v := s.videos[idx]
 	file := format.BaseName(v.Title)
 
@@ -263,7 +264,7 @@ func (s *fileListScreen) request(idx int) PlayRequest {
 		name = file
 	}
 
-	return PlayRequest{
+	return player.PlayRequest{
 		VideoID:   v.ID,
 		MediaType: "other",
 		Label:     file,

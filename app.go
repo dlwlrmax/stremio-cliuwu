@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -22,7 +23,7 @@ type appCtx struct {
 	cfg        store.AppConfig
 	refs       stremio.AddonList
 	addons     []stremio.Addon
-	player     *Player
+	player     *player.Player
 	downloader *download.Downloader
 	prog       *tea.Program
 
@@ -136,7 +137,7 @@ func toast(s string) tea.Cmd      { return func() tea.Msg { return toastMsg{text
 // invoked from inside Update. Returning a command hands the message to the
 // runtime, which delivers it once the current update has finished.
 func playerStateCmd() tea.Cmd {
-	return func() tea.Msg { return PlayerStateMsg{State: ctx.player.State()} }
+	return func() tea.Msg { return player.StateMsg{State: ctx.player.State()} }
 }
 func toastErr(s string) tea.Cmd { return func() tea.Msg { return toastMsg{text: s, isErr: true} } }
 
@@ -145,7 +146,7 @@ func toastErr(s string) tea.Cmd { return func() tea.Msg { return toastMsg{text: 
 type app struct {
 	stack  []screen
 	w, h   int
-	pstate PlayerState
+	pstate player.State
 
 	toastText string
 	toastErr  bool
@@ -180,7 +181,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.stack[len(a.stack)-1] = next
 		return a, cmd
 
-	case PlayerStateMsg:
+	case player.StateMsg:
 		a.pstate = m.State
 		a.resize()
 		// Fall through to the top screen as well: episode lists and the main
@@ -189,7 +190,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.stack[len(a.stack)-1] = next
 		return a, cmd
 
-	case PlayerNoticeMsg:
+	case player.NoticeMsg:
 		return a, toast(m.Text)
 
 	case download.TickMsg:
@@ -204,7 +205,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, toast("downloaded " + m.Label)
 
-	case PrefetchNextMsg:
+	case player.PrefetchNextMsg:
 		// Something's already lined up — don't pull the rug out from under a
 		// decision that's been made.
 		if ctx.player.Queued() != nil {
@@ -212,13 +213,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.advanceTo(m.Prev, "next up — ")
 
-	case EpisodeEndedMsg:
+	case player.EpisodeEndedMsg:
 		if ctx.player.Queued() != nil {
 			return a, nil
 		}
 		return a, a.advanceTo(m.Prev, "next up — ")
 
-	case PlayerErrMsg:
+	case player.ErrMsg:
 		if m.Err != nil {
 			return a, toastErr(m.Err.Error())
 		}
@@ -404,7 +405,7 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 			if now.MediaType == "series" && now.Queue != nil {
 				showID = now.Entry.ID
 			}
-			return push(newSubsScreen(now.Label, SubsQueryFrom(now), now.Subs, showID)), true
+			return push(newSubsScreen(now.Label, player.SubsQueryFrom(now), now.Subs, showID)), true
 		}
 	}
 	return nil, false
@@ -417,7 +418,7 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 // menu, or out of a completely different show, mid-browse. When you're
 // elsewhere the streams are fetched in the background instead, so they're
 // warm when you do go looking, and the menu's "next up" entry points at them.
-func (a *app) advanceTo(prev PlayRequest, prefix string) tea.Cmd {
+func (a *app) advanceTo(prev player.PlayRequest, prefix string) tea.Cmd {
 	t, ok := nextEpisodeTarget(prev)
 	if !ok {
 		return toast("finished — " + prev.Label)
