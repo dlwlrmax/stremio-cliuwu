@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 
@@ -22,7 +23,7 @@ type menuScreen struct {
 	baseScreen
 	list    listModel
 	entries []menuEntry
-	resume  *ContinueItem
+	resume  *store.ContinueItem
 	panel   continuePanel
 	fetched string // videoID the panel's episode info belongs to
 }
@@ -108,7 +109,7 @@ func spacer() menuEntry { return menuEntry{head: " "} }
 
 func (s *menuScreen) rebuild() {
 	s.entries = nil
-	s.resume = ContinueTarget()
+	s.resume = store.ContinueTarget()
 
 	if c := s.resume; c != nil {
 		e := c.Entry
@@ -336,7 +337,7 @@ func (s *menuScreen) View() string {
 // the next one themselves, so the stack ends up
 // menu › show › season › streams — meaning `b` out of the stream picker lands
 // on the episode list, the way the old client behaved.
-func resumeScreen(e HistoryEntry) screen {
+func resumeScreen(e store.HistoryEntry) screen {
 	m := stremio.Meta{ID: e.ID, Type: e.Type, Name: e.Name, Year: e.Year, Source: e.Source, Base: e.Base}
 
 	// Episode number, not season: a special sits in season 0 and would

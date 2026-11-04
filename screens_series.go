@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -107,7 +108,7 @@ func (s *seasonScreen) Footer() string {
 }
 
 func (s *seasonScreen) rebuild() {
-	states := EpisodeStates(s.show.ID)
+	states := store.EpisodeStates(s.show.ID)
 	specials := format.GroupSpecials(s.sm.Videos)
 
 	items := make([]Item, len(s.seasons))
@@ -252,7 +253,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			// Favourite what the screen is showing, not what the cursor
 			// happens to be sitting on. Press f inside a season to pin that
 			// season instead.
-			if ToggleFav(Favourite{
+			if store.ToggleFav(store.Favourite{
 				Name: s.show.Name, ID: s.show.ID, Type: s.show.Type,
 				Source: s.show.Source, Year: s.show.Year, Base: s.show.Base,
 			}) {
@@ -268,7 +269,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 						eps = append(eps, v)
 					}
 				}
-				states := EpisodeStates(s.show.ID)
+				states := store.EpisodeStates(s.show.ID)
 				all := len(eps) > 0
 				for _, v := range eps {
 					if !states[[2]int{season, v.Episode}].Watched {
@@ -276,7 +277,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 						break
 					}
 				}
-				SetSeasonWatched(s.show, season, eps, !all)
+				store.SetSeasonWatched(s.show, season, eps, !all)
 				s.rebuild()
 				s.list.Focus(i)
 				if all {
@@ -382,7 +383,7 @@ func (s *episodeScreen) Footer() string {
 }
 
 func (s *episodeScreen) rebuild() {
-	states := EpisodeStates(s.show.ID) // one read, not one per row
+	states := store.EpisodeStates(s.show.ID) // one read, not one per row
 	live := ctx.player.State()
 
 	items := make([]Item, len(s.eps))
@@ -415,7 +416,7 @@ func (s *episodeScreen) rebuild() {
 
 // firstUnwatched returns the index of the first episode not yet watched.
 func (s *episodeScreen) firstUnwatched() int {
-	states := EpisodeStates(s.show.ID)
+	states := store.EpisodeStates(s.show.ID)
 	for i, v := range s.eps {
 		if !states[[2]int{s.season, v.Episode}].Watched {
 			return i
@@ -485,10 +486,10 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i < 0 {
 				return s, nil
 			}
-			pos, _, _ := GetPositionByEpisode(s.show.ID, s.season, s.eps[i].Episode)
+			pos, _, _ := store.GetPositionByEpisode(s.show.ID, s.season, s.eps[i].Episode)
 			return s, push(s.streamFor(i, pos))
 		case "f":
-			if ToggleFav(Favourite{
+			if store.ToggleFav(store.Favourite{
 				Name: s.show.Name, ID: s.show.ID, Type: s.show.Type,
 				Source: s.show.Source, Year: s.show.Year, Season: s.season, Base: s.show.Base,
 			}) {
@@ -499,7 +500,7 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i := s.list.Selected(); i >= 0 {
 				v := s.eps[i]
 
-				e := HistoryEntry{
+				e := store.HistoryEntry{
 					Name: s.show.Name, ID: s.show.ID, Type: "series",
 					Source: s.show.Source, Year: s.show.Year,
 					Season: s.season, Episode: v.Episode,
@@ -519,7 +520,7 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 					e.NextReleased = n.Released
 				}
 
-				now := ToggleWatchedByEpisode(e)
+				now := store.ToggleWatchedByEpisode(e)
 				s.rebuild()
 				s.list.Focus(i)
 				if now {
@@ -530,14 +531,14 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "W":
 			// Whole season, in one write rather than one per episode.
 			allWatched := true
-			states := EpisodeStates(s.show.ID)
+			states := store.EpisodeStates(s.show.ID)
 			for _, v := range s.eps {
 				if !states[[2]int{s.season, v.Episode}].Watched {
 					allWatched = false
 					break
 				}
 			}
-			SetSeasonWatched(s.show, s.season, s.eps, !allWatched)
+			store.SetSeasonWatched(s.show, s.season, s.eps, !allWatched)
 			cur := s.list.Selected()
 			s.rebuild()
 			if cur >= 0 {

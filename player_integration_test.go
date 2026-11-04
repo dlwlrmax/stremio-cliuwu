@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"testing"
 	"time"
@@ -73,12 +74,12 @@ func itSetup(t *testing.T) *itEnv {
 	wrap := filepath.Join(dir, "mpvw")
 	os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+real+" \"$@\" --vo=null --ao=null --force-window=no\n"), 0755)
 
-	cfg := AppConfig{MpvPath: wrap, SubtitleLang: "eng, en, English", AutoSubtitle: true}
+	cfg := store.AppConfig{MpvPath: wrap, SubtitleLang: "eng, en, English", AutoSubtitle: true}
 	p := NewPlayer(cfg)
 	ctx = &appCtx{cfg: cfg, player: p}
-	publishCfg(cfg)
-	LoadSubPrefs()
-	hist = &historyStore{}
+	store.PublishCfg(cfg)
+	store.LoadSubPrefs()
+	store.Hist = &store.HistoryStore{}
 
 	msgs := make(chan tea.Msg, 256)
 	prog := tea.NewProgram(sink{msgs}, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer())
@@ -132,7 +133,7 @@ func seriesReq(file, show string, ep int) PlayRequest {
 	eps := []stremio.Video{{ID: show + ":1:1", Season: 1, Episode: 1}, {ID: show + ":1:2", Season: 1, Episode: 2}}
 	return PlayRequest{
 		VideoID: fmt.Sprintf("%s:1:%d", show, ep), MediaType: "series", Label: "t", URL: file,
-		Entry: HistoryEntry{ID: show, Name: "Show", Type: "series", Season: 1, Episode: ep, VideoID: fmt.Sprintf("%s:1:%d", show, ep)},
+		Entry: store.HistoryEntry{ID: show, Name: "Show", Type: "series", Season: 1, Episode: ep, VideoID: fmt.Sprintf("%s:1:%d", show, ep)},
 		Queue: &EpQueue{Show: stremio.Meta{ID: show, Name: "Show"}, Season: 1, Episodes: eps, All: eps, Index: ep - 1},
 	}
 }
@@ -154,8 +155,8 @@ func TestIntegrationSubsOffIsRememberedPerShow(t *testing.T) {
 	// The user turns subtitles off.
 	e.p.command("set_property", "sid", "no")
 	itWait(t, 5*time.Second, "off preference to be saved", func() bool {
-		p, ok := GetSubPref("ttA")
-		return ok && p.Lang == subOff
+		p, ok := store.GetSubPref("ttA")
+		return ok && p.Lang == store.SubOff
 	})
 
 	// Next episode: nothing may turn them back on.
@@ -184,7 +185,7 @@ func TestIntegrationEndOfFileDoesNotRecordOff(t *testing.T) {
 
 	// Let it run to the end (3s clip).
 	time.Sleep(4 * time.Second)
-	if p, ok := GetSubPref("ttC"); ok {
+	if p, ok := store.GetSubPref("ttC"); ok {
 		t.Errorf("finishing an episode must not record a preference, got %+v", p)
 	}
 }
@@ -296,14 +297,14 @@ func TestIntegrationHandPickedEmbeddedTrackCarriesToNextEpisode(t *testing.T) {
 		t.Fatalf("--slang should start on English, sid=%v", got)
 	}
 	time.Sleep(handPickAfter + time.Second) // past the load window and any async save
-	if p, ok := GetSubPref("ttE"); ok {
+	if p, ok := store.GetSubPref("ttE"); ok {
 		t.Fatalf("mpv's own auto-selection must not be recorded, got %+v", p)
 	}
 
 	// The user picks French from mpv's subtitle menu.
 	e.p.command("set_property", "sid", 2)
 	itWait(t, 5*time.Second, "hand pick to be saved", func() bool {
-		p, ok := GetSubPref("ttE")
+		p, ok := store.GetSubPref("ttE")
 		return ok && p.Lang == "French" && p.Src == "embedded"
 	})
 
@@ -320,7 +321,7 @@ func TestIntegrationSavedLanguagePrefersEmbeddedOverPlugin(t *testing.T) {
 	e := itSetup(t)
 	two := itTwoTracks(t)
 	itFakeSubAddon(t, "fre", 0)
-	SetSubPref("ttF", "French", "plugin")
+	store.SetSubPref("ttF", "French", "plugin")
 
 	e.p.play(seriesReq(two, "ttF", 2))
 	e.loaded(t)
@@ -341,7 +342,7 @@ func TestIntegrationSavedLanguageFallsBackToPlugin(t *testing.T) {
 	e := itSetup(t)
 	two := itTwoTracks(t)
 	itFakeSubAddon(t, "spa", 0)
-	SetSubPref("ttG", "Spanish", "embedded")
+	store.SetSubPref("ttG", "Spanish", "embedded")
 
 	e.p.play(seriesReq(two, "ttG", 2))
 	e.loaded(t)
@@ -356,7 +357,7 @@ func TestIntegrationEmbeddedAppliesBeforeAddonsAnswer(t *testing.T) {
 	e := itSetup(t)
 	two := itTwoTracks(t)
 	itFakeSubAddon(t, "fre", 6*time.Second)
-	SetSubPref("ttH", "French", "embedded")
+	store.SetSubPref("ttH", "French", "embedded")
 
 	e.p.play(seriesReq(two, "ttH", 2))
 	e.loaded(t)
@@ -377,7 +378,7 @@ func TestIntegrationSameLanguageTracksAreToldApartByTitle(t *testing.T) {
 
 	e.p.command("set_property", "sid", 2) // the second English track
 	itWait(t, 5*time.Second, "titled hand pick to be saved", func() bool {
-		p, ok := GetSubPref("ttI")
+		p, ok := store.GetSubPref("ttI")
 		return ok && p.Lang == "English" && p.Track == "Signs"
 	})
 

@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"os/exec"
+	"stremio-cliuwu/internal/store"
 	"strings"
 	"sync"
 	"time"
@@ -91,7 +92,7 @@ func kittySupported() bool {
 	}
 
 	if ctx != nil {
-		switch cfgNow().KittyMode {
+		switch store.CfgNow().KittyMode {
 		case "kitty":
 			return true
 		case "default":

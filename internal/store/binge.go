@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"stremio-cliuwu/internal/jsonio"

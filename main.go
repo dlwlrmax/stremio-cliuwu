@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
@@ -93,21 +94,21 @@ func main() {
 		return
 	}
 
-	cfg := LoadConfig()
+	cfg := store.LoadConfig()
 	applyAccent(cfg.Accent)
 	if cfg.MpvPath == "" {
 		// Only worth writing once something was found; otherwise every launch
 		// without mpv rewrites the config for nothing.
-		if cfg.MpvPath = detectMpv(); cfg.MpvPath != "" {
-			SaveConfig(cfg)
+		if cfg.MpvPath = store.DetectMpv(); cfg.MpvPath != "" {
+			store.SaveConfig(cfg)
 		}
 	}
 
 	// First run: no addons.json yet, so seed the two metadata addons. Stream
 	// addons are the user's to add — there's no account to pull them from.
 	refs := stremio.LoadAddonRefs()
-	LoadSubPrefs()
-	LoadBingePrefs()
+	store.LoadSubPrefs()
+	store.LoadBingePrefs()
 	firstRun := false
 	if len(refs.Items) == 0 {
 		if _, err := os.Stat(paths.AddonsFile()); os.IsNotExist(err) {
@@ -116,7 +117,7 @@ func main() {
 		}
 	}
 
-	publishCfg(cfg)
+	store.PublishCfg(cfg)
 	player := NewPlayer(cfg)
 	downloader := NewDownloader()
 	ctx = &appCtx{
@@ -150,13 +151,13 @@ func main() {
 	// rescans when the index and the disk have drifted apart.
 	downloader.Load()
 
-	WarmHistory()
+	store.WarmHistory()
 
 	// Boot pull: a signed-in account gets one background sync so history from
 	// elsewhere is there before you go looking. Silent — the settings screen's
 	// manual "sync now" is where the counts surface.
 	if cfg.AutoSync {
-		go autoSyncPull(prog)
+		go store.AutoSyncPull(prog)
 	}
 
 	if firstRun {
@@ -177,7 +178,7 @@ func main() {
 			} else {
 				player.Shutdown()
 			}
-			FlushHistory() // debounced writes mean the last few seconds are still in memory
+			store.FlushHistory() // debounced writes mean the last few seconds are still in memory
 		})
 	}
 	defer cleanup()

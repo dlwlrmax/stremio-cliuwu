@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func epItem(v stremio.Video, watched bool) Item {
 	return it
 }
 
-func HistoryItem(e HistoryEntry) Item {
+func HistoryItem(e store.HistoryEntry) Item {
 	yr := e.Year
 	if yr == "" {
 		yr = "?"
@@ -88,7 +89,7 @@ func HistoryItem(e HistoryEntry) Item {
 }
 
 // ShowHistoryItem is a title row in the grouped history view.
-func ShowHistoryItem(sh ShowSummary) Item {
+func ShowHistoryItem(sh store.ShowSummary) Item {
 	// No "(?)" filler. A library entry is a torrent name with no release
 	// year to know, so an empty pair of brackets says nothing except that
 	// something is missing.
@@ -128,7 +129,7 @@ func ShowHistoryItem(sh ShowSummary) Item {
 //
 // recent is the history list, passed in so a screen full of favourites reads it
 // once rather than once per row.
-func FavItem(f Favourite, recent []HistoryEntry) Item {
+func FavItem(f store.Favourite, recent []store.HistoryEntry) Item {
 	yr := f.Year
 	if yr == "" {
 		yr = "?"
@@ -142,7 +143,7 @@ func FavItem(f Favourite, recent []HistoryEntry) Item {
 	// Get watch progress from history
 	badge := kindTag(f.Source, f.Type) + season
 	if f.Type == "series" {
-		var lastEntry *HistoryEntry
+		var lastEntry *store.HistoryEntry
 		for i := range recent {
 			e := &recent[i]
 			if e.ID == f.ID {

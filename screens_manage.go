@@ -6,6 +6,7 @@ import (
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 
@@ -18,7 +19,7 @@ import (
 type favsScreen struct {
 	baseScreen
 	list listModel
-	favs []Favourite
+	favs []store.Favourite
 }
 
 func newFavsScreen() *favsScreen {
@@ -48,9 +49,9 @@ func (s *favsScreen) Footer() string {
 }
 
 func (s *favsScreen) rebuild() {
-	s.favs = LoadFavs().Items
+	s.favs = store.LoadFavs().Items
 	items := make([]Item, len(s.favs))
-	recent := LoadHistory().Items
+	recent := store.LoadHistory().Items
 	for i, f := range s.favs {
 		items[i] = FavItem(f, recent)
 	}
@@ -79,7 +80,7 @@ func (s *favsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "d":
 			if i := s.list.Selected(); i >= 0 {
 				name := s.favs[i].Name
-				RemoveFav(i)
+				store.RemoveFav(i)
 				s.rebuild()
 				return s, toast("removed " + name)
 			}
@@ -99,8 +100,8 @@ func (s *favsScreen) View() string { return s.list.View() }
 type historyScreen struct {
 	baseScreen
 	list    listModel
-	entries []HistoryEntry
-	shows   []ShowSummary
+	entries []store.HistoryEntry
+	shows   []store.ShowSummary
 
 	// Grouped by title rather than one row per episode. Clearing a show you
 	// finished months ago otherwise means deleting thirty rows by hand.
@@ -145,7 +146,7 @@ func (s *historyScreen) Footer() string {
 
 func (s *historyScreen) rebuild() {
 	if s.grouped {
-		s.shows = HistoryShows()
+		s.shows = store.HistoryShows()
 		items := make([]Item, len(s.shows))
 		for i, sh := range s.shows {
 			items[i] = ShowHistoryItem(sh)
@@ -154,7 +155,7 @@ func (s *historyScreen) rebuild() {
 		return
 	}
 
-	s.entries = LoadHistory().Items
+	s.entries = store.LoadHistory().Items
 	items := make([]Item, len(s.entries))
 	for i, e := range s.entries {
 		items[i] = HistoryItem(e)
@@ -220,8 +221,8 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 					fmt.Sprintf("remove %s and all %d of its entries?", sh.Name, sh.Episodes),
 					"remove",
 					func() tea.Cmd {
-						ClearShow(sh.ID)
-						invalidateInProgress()
+						store.ClearShow(sh.ID)
+						store.InvalidateInProgress()
 						s.rebuild()
 						return toast("removed " + sh.Name)
 					}))
@@ -230,14 +231,14 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if i >= len(s.entries) {
 				return s, nil
 			}
-			ClearHistoryEntry(s.entries[i])
-			invalidateInProgress()
+			store.ClearHistoryEntry(s.entries[i])
+			store.InvalidateInProgress()
 			s.rebuild()
 			return s, toast("removed")
 		case "D":
 			return s, push(newDestructive("clear history", "clear the entire watch history?", "clear",
 				func() tea.Cmd {
-					ClearAllHistory()
+					store.ClearAllHistory()
 					s.rebuild()
 					return toast("history cleared")
 				}))
@@ -484,9 +485,9 @@ func orDash(s string) string {
 
 func (s *settingsScreen) save() tea.Cmd {
 	ctx.cfg.SetDefaults()
-	err := SaveConfig(ctx.cfg)
+	err := store.SaveConfig(ctx.cfg)
 	ctx.player.SetConfig(ctx.cfg)
-	invalidateInProgress()
+	store.InvalidateInProgress()
 	s.rebuild()
 	if err != nil {
 		// Applied for this session, but gone on restart.
@@ -516,7 +517,7 @@ func (s *settingsScreen) rebuild() {
 			return s.prompt("mpv path", "mpv", ctx.cfg.MpvPath, func(v string) tea.Cmd {
 				ctx.cfg.MpvPath = v
 				return s.save()
-			}, "leave blank to use `mpv` from PATH", "detected: "+orDash(detectMpv()))
+			}, "leave blank to use `mpv` from PATH", "detected: "+orDash(store.DetectMpv()))
 		}},
 		{label: "preferred quality", sub: "streams matching this sort first", badge: orDash(c.PreferredQuality), act: func() tea.Cmd {
 			return s.prompt("preferred quality", "1080p", ctx.cfg.PreferredQuality, func(v string) tea.Cmd {
@@ -689,13 +690,13 @@ func (s *settingsScreen) rebuild() {
 			return s.save()
 		}},
 		{label: "movie filename", sub: orDash(c.MoviePattern), act: func() tea.Cmd {
-			return s.prompt("movie filename", DefaultMoviePattern, ctx.cfg.MoviePattern, func(v string) tea.Cmd {
+			return s.prompt("movie filename", store.DefaultMoviePattern, ctx.cfg.MoviePattern, func(v string) tea.Cmd {
 				ctx.cfg.MoviePattern = v
 				return s.save()
 			}, "placeholders: {title} {year}", "/ makes a folder · extension is added for you")
 		}},
 		{label: "episode filename", sub: orDash(c.EpisodePattern), act: func() tea.Cmd {
-			return s.prompt("episode filename", DefaultEpisodePattern, ctx.cfg.EpisodePattern, func(v string) tea.Cmd {
+			return s.prompt("episode filename", store.DefaultEpisodePattern, ctx.cfg.EpisodePattern, func(v string) tea.Cmd {
 				ctx.cfg.EpisodePattern = v
 				return s.save()
 			}, "placeholders: {show} {season} {episode} {title} {year}",
@@ -705,7 +706,7 @@ func (s *settingsScreen) rebuild() {
 
 	// Account rows are appended rather than baked into the literal above:
 	// whether they exist, and what they say, depends on the saved account.
-	ac := LoadAccount()
+	ac := store.LoadAccount()
 	s.rows = append(s.rows,
 		settingRow{head: ""},
 		settingRow{head: "account"},
@@ -724,7 +725,7 @@ func (s *settingsScreen) rebuild() {
 						if pw == "" {
 							return nil
 						}
-						return tea.Batch(toast("signing in…"), stremioLoginCmd(email, pw))
+						return tea.Batch(toast("signing in…"), store.StremioLoginCmd(email, pw))
 					}, "sent over https to strem.io — the password is not stored"))
 				}, "your strem.io account email")
 			},
@@ -753,7 +754,7 @@ func (s *settingsScreen) rebuild() {
 			settingRow{
 				label: "sync now",
 				sub:   "two-way sync · pulls newer remote history, pushes yours",
-				act:   func() tea.Cmd { return tea.Batch(toast("syncing…"), stremioSyncCmd()) },
+				act:   func() tea.Cmd { return tea.Batch(toast("syncing…"), store.StremioSyncCmd()) },
 			},
 			settingRow{
 				label: "log out",
@@ -761,7 +762,7 @@ func (s *settingsScreen) rebuild() {
 				act: func() tea.Cmd {
 					return push(newDestructive("log out", "remove the saved stremio account?", "log out",
 						func() tea.Cmd {
-							ClearAccount()
+							store.ClearAccount()
 							s.rebuild()
 							return toast("signed out")
 						}))
@@ -787,20 +788,20 @@ func (s *settingsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, nil
 	}
 
-	if m, ok := msg.(stremioSyncDoneMsg); ok {
+	if m, ok := msg.(store.StremioSyncDoneMsg); ok {
 		s.rebuild()
-		if m.err != nil {
+		if m.Err != nil {
 			// A failed first pull still leaves a usable account behind, so
 			// say so rather than implying the sign-in itself failed.
-			if m.signedIn {
-				return s, toastErr("signed in, but sync failed — " + m.err.Error())
+			if m.SignedIn {
+				return s, toastErr("signed in, but sync failed — " + m.Err.Error())
 			}
-			return s, toastErr(m.err.Error())
+			return s, toastErr(m.Err.Error())
 		}
-		if m.signedIn {
-			return s, toast(fmt.Sprintf("signed in as %s — pulled %d, pushed %d", m.email, m.pulled, m.pushed))
+		if m.SignedIn {
+			return s, toast(fmt.Sprintf("signed in as %s — pulled %d, pushed %d", m.Email, m.Pulled, m.Pushed))
 		}
-		return s, toast(fmt.Sprintf("stremio: pulled %d, pushed %d", m.pulled, m.pushed))
+		return s, toast(fmt.Sprintf("stremio: pulled %d, pushed %d", m.Pulled, m.Pushed))
 	}
 
 	if k, ok := msg.(tea.KeyMsg); ok {

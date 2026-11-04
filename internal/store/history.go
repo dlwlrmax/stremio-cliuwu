@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"encoding/json"
@@ -32,13 +32,13 @@ import (
 const (
 	flushDelay    = 15 * time.Second
 	defaultRecent = 300 // fallback when the setting is unreadable
-	historyVer    = 3
+	HistoryVer    = 3
 )
 
 // recentLimit is how many entries the history screen keeps. Watched state is
 // unbounded and lives separately — this only caps the list you browse.
 func recentLimit() int {
-	if n := cfgNow().HistoryMax; n > 0 {
+	if n := CfgNow().HistoryMax; n > 0 {
 		return n
 	}
 	return defaultRecent
@@ -46,9 +46,9 @@ func recentLimit() int {
 
 // ── On-disk shape ─────────────────────────────────────────────────────────────
 
-// epState is one episode. Short keys and omitempty throughout: this is the
+// EpRecord is one episode. Short keys and omitempty throughout: this is the
 // part that repeats thousands of times.
-type epState struct {
+type EpRecord struct {
 	W bool    `json:"w,omitempty"` // watched
 	P float64 `json:"p,omitempty"` // position, seconds
 	D float64 `json:"d,omitempty"` // duration, seconds
@@ -61,8 +61,8 @@ type epState struct {
 	M int64 `json:"m,omitempty"`
 }
 
-// showState holds a title's details once, with its episodes beneath.
-type showState struct {
+// ShowState holds a title's details once, with its episodes beneath.
+type ShowState struct {
 	Name   string `json:"name"`
 	Type   string `json:"type,omitempty"`
 	Source string `json:"source,omitempty"`
@@ -79,15 +79,15 @@ type showState struct {
 	Base string `json:"base,omitempty"`
 
 	// Keyed "season:episode". Movies use "0:0".
-	Eps map[string]*epState `json:"eps,omitempty"`
+	Eps map[string]*EpRecord `json:"eps,omitempty"`
 }
 
-// recentEntry is one line of the history screen.
+// RecentEntry is one line of the history screen.
 //
 // Deliberately separate from watched state: bulk-marking a season writes
 // hundreds of episode states but nothing here, because marking isn't
 // watching, and it used to flush the entire history list off the end.
-type recentEntry struct {
+type RecentEntry struct {
 	ShowID  string `json:"id"`
 	Season  int    `json:"s,omitempty"`
 	Episode int    `json:"e,omitempty"`
@@ -110,34 +110,34 @@ type recentEntry struct {
 	NextRelease string `json:"nr,omitempty"`
 }
 
-type historyFile struct {
+type HistoryFile struct {
 	Version int                   `json:"version"`
-	Shows   map[string]*showState `json:"shows"`
-	Recent  []recentEntry         `json:"recent"`
+	Shows   map[string]*ShowState `json:"shows"`
+	Recent  []RecentEntry         `json:"recent"`
 }
 
 // ── In-memory store ───────────────────────────────────────────────────────────
 
-// epRef locates an episode's state without a second lookup.
-type epRef struct {
+// EpRef locates an episode's state without a second lookup.
+type EpRef struct {
 	showID string
 	key    string
 }
 
-type historyStore struct {
+type HistoryStore struct {
 	mu   sync.Mutex
 	fmu  sync.Mutex // serialises Flush end to end so writes land in order
-	data historyFile
+	data HistoryFile
 
-	byVideo map[string]epRef
+	byVideo map[string]EpRef
 	loaded  bool
 	dirty   bool
 	pending bool // a flush is already scheduled
 }
 
-var hist = &historyStore{}
+var Hist = &HistoryStore{}
 
-func epKey(season, episode int) string {
+func EpKey(season, episode int) string {
 	return strconv.Itoa(season) + ":" + strconv.Itoa(episode)
 }
 
@@ -150,13 +150,13 @@ func parseEpKey(k string) (season, episode int) {
 }
 
 // load reads the file once. Callers hold the lock.
-func (h *historyStore) load() {
+func (h *HistoryStore) load() {
 	if h.loaded {
 		return
 	}
 	h.loaded = true
-	h.data = historyFile{Version: historyVer, Shows: map[string]*showState{}}
-	h.byVideo = map[string]epRef{}
+	h.data = HistoryFile{Version: HistoryVer, Shows: map[string]*ShowState{}}
+	h.byVideo = map[string]EpRef{}
 
 	b, err := os.ReadFile(paths.HistFile())
 	if err != nil {
@@ -166,14 +166,14 @@ func (h *historyStore) load() {
 	// The v1 flat array is deliberately not read — if that ever needs moving
 	// across, a standalone script can do it once rather than the app carrying
 	// a migration path forever. v2 → v3 added the real mtime M.
-	var f historyFile
+	var f HistoryFile
 	if json.Unmarshal(b, &f) != nil || f.Version < 2 || f.Shows == nil {
 		// Starting empty is fine; overwriting the file on the next flush is
 		// not. Keep what was there.
 		jsonio.Quarantine(paths.HistFile())
 		return
 	}
-	if f.Version < historyVer {
+	if f.Version < HistoryVer {
 		for _, sh := range f.Shows {
 			for _, e := range sh.Eps {
 				if e.M == 0 {
@@ -181,39 +181,39 @@ func (h *historyStore) load() {
 				}
 			}
 		}
-		f.Version = historyVer
+		f.Version = HistoryVer
 	}
 
 	h.data = f
 	if h.data.Shows == nil {
-		h.data.Shows = map[string]*showState{}
+		h.data.Shows = map[string]*ShowState{}
 	}
 	h.reindex()
 }
 
 // reindex rebuilds the videoID lookup after loading.
-func (h *historyStore) reindex() {
-	h.byVideo = map[string]epRef{}
+func (h *HistoryStore) reindex() {
+	h.byVideo = map[string]EpRef{}
 	for _, sh := range h.data.Shows {
 		if sh.Eps == nil {
-			sh.Eps = map[string]*epState{}
+			sh.Eps = map[string]*EpRecord{}
 		}
 	}
 	for _, r := range h.data.Recent {
 		if r.VideoID != "" {
-			h.byVideo[r.VideoID] = epRef{showID: r.ShowID, key: epKey(r.Season, r.Episode)}
+			h.byVideo[r.VideoID] = EpRef{showID: r.ShowID, key: EpKey(r.Season, r.Episode)}
 		}
 	}
 }
 
-func (h *historyStore) show(id string, m stremio.Meta) *showState {
+func (h *HistoryStore) show(id string, m stremio.Meta) *ShowState {
 	sh, ok := h.data.Shows[id]
 	if !ok {
-		sh = &showState{Eps: map[string]*epState{}}
+		sh = &ShowState{Eps: map[string]*EpRecord{}}
 		h.data.Shows[id] = sh
 	}
 	if sh.Eps == nil {
-		sh.Eps = map[string]*epState{}
+		sh.Eps = map[string]*EpRecord{}
 	}
 	if m.Name != "" {
 		sh.Name = m.Name
@@ -233,14 +233,14 @@ func (h *historyStore) show(id string, m stremio.Meta) *showState {
 	return sh
 }
 
-func (h *historyStore) ep(showID, key string) *epState {
+func (h *HistoryStore) ep(showID, key string) *EpRecord {
 	if sh, ok := h.data.Shows[showID]; ok {
 		return sh.Eps[key]
 	}
 	return nil
 }
 
-func (h *historyStore) trimRecent() {
+func (h *HistoryStore) trimRecent() {
 	if n := recentLimit(); len(h.data.Recent) > n {
 		clear(h.data.Recent[n:])
 		h.data.Recent = h.data.Recent[:n]
@@ -248,9 +248,9 @@ func (h *historyStore) trimRecent() {
 }
 
 // touch marks the store dirty and schedules a flush, if one isn't already due.
-func (h *historyStore) touch() {
+func (h *HistoryStore) touch() {
 	h.dirty = true
-	invalidateInProgress()
+	InvalidateInProgress()
 
 	if h.pending {
 		return
@@ -258,12 +258,12 @@ func (h *historyStore) touch() {
 	h.pending = true
 	go func() {
 		time.Sleep(flushDelay)
-		hist.Flush()
+		Hist.Flush()
 	}()
 }
 
 // Flush writes the store out if anything changed.
-func (h *historyStore) Flush() {
+func (h *HistoryStore) Flush() {
 	h.fmu.Lock()
 	defer h.fmu.Unlock()
 	h.mu.Lock()
@@ -273,7 +273,7 @@ func (h *historyStore) Flush() {
 		return
 	}
 	h.dirty = false
-	h.data.Version = historyVer
+	h.data.Version = HistoryVer
 	b, err := json.Marshal(h.data)
 	h.mu.Unlock()
 
@@ -293,14 +293,14 @@ func (h *historyStore) Flush() {
 // it's visible.
 func WarmHistory() {
 	go func() {
-		hist.mu.Lock()
-		defer hist.mu.Unlock()
-		hist.load()
+		Hist.mu.Lock()
+		defer Hist.mu.Unlock()
+		Hist.load()
 	}()
 }
 
 // FlushHistory is called on the way out so the last few seconds aren't lost.
-func FlushHistory() { hist.Flush() }
+func FlushHistory() { Hist.Flush() }
 
 // ── In-progress cache ─────────────────────────────────────────────────────────
 
@@ -309,7 +309,7 @@ var (
 	inProgressValid bool
 )
 
-func invalidateInProgress() { inProgressValid = false }
+func InvalidateInProgress() { inProgressValid = false }
 
 // ── Episode state ─────────────────────────────────────────────────────────────
 
@@ -323,12 +323,12 @@ type EpState struct {
 // EpisodeStates returns every recorded episode for a show — a map lookup now,
 // where it used to be a file read and a linear scan.
 func EpisodeStates(showID string) map[[2]int]EpState {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
 	out := map[[2]int]EpState{}
-	sh, ok := hist.data.Shows[showID]
+	sh, ok := Hist.data.Shows[showID]
 	if !ok {
 		return out
 	}
@@ -345,12 +345,12 @@ func EpisodeStates(showID string) map[[2]int]EpState {
 }
 
 func GetPosition(videoID string) (pos, duration float64, watched bool) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	if ref, ok := hist.byVideo[videoID]; ok {
-		if e := hist.ep(ref.showID, ref.key); e != nil {
+	if ref, ok := Hist.byVideo[videoID]; ok {
+		if e := Hist.ep(ref.showID, ref.key); e != nil {
 			return e.P, e.D, e.W
 		}
 	}
@@ -358,11 +358,11 @@ func GetPosition(videoID string) (pos, duration float64, watched bool) {
 }
 
 func GetPositionByEpisode(showID string, season, episode int) (pos, duration float64, watched bool) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	if e := hist.ep(showID, epKey(season, episode)); e != nil {
+	if e := Hist.ep(showID, EpKey(season, episode)); e != nil {
 		return e.P, e.D, e.W
 	}
 	return 0, 0, false
@@ -373,32 +373,32 @@ func GetPositionByEpisode(showID string, season, episode int) (pos, duration flo
 // AddHistory records that something was opened. maxEntries is kept in the
 // signature for callers; the recent list has its own bound.
 func AddHistory(e HistoryEntry, maxEntries int) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	sh := hist.show(e.ID, stremio.Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
+	sh := Hist.show(e.ID, stremio.Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
 	now := time.Now().Unix()
 	sh.SeenAt = now
 
-	key := epKey(e.Season, e.Episode)
+	key := EpKey(e.Season, e.Episode)
 	if sh.Eps[key] == nil {
-		sh.Eps[key] = &epState{}
+		sh.Eps[key] = &EpRecord{}
 	}
 	sh.Eps[key].T = now
 	sh.Eps[key].M = now
 
 	if e.VideoID != "" {
-		hist.byVideo[e.VideoID] = epRef{showID: e.ID, key: key}
+		Hist.byVideo[e.VideoID] = EpRef{showID: e.ID, key: key}
 	}
 
-	hist.pushRecent(e, now)
-	hist.touch()
+	Hist.pushRecent(e, now)
+	Hist.touch()
 }
 
 // pushRecent moves an entry to the front of the recent list, dropping any
 // earlier row for the same episode. Callers hold the lock.
-func (h *historyStore) pushRecent(e HistoryEntry, now int64) {
+func (h *HistoryStore) pushRecent(e HistoryEntry, now int64) {
 	out := h.data.Recent[:0]
 	for _, r := range h.data.Recent {
 		if r.ShowID == e.ID && r.Season == e.Season && r.Episode == e.Episode {
@@ -409,7 +409,7 @@ func (h *historyStore) pushRecent(e HistoryEntry, now int64) {
 
 	// No clear needed here: the append below builds a new slice, so the old
 	// backing array goes unreachable whole.
-	h.data.Recent = append([]recentEntry{{
+	h.data.Recent = append([]RecentEntry{{
 		ShowID: e.ID, Season: e.Season, Episode: e.Episode,
 		VideoID: e.VideoID, EpTitle: e.EpTitle, Total: e.EpisodeTotal, At: now,
 		NextVideoID: e.NextVideoID, NextSeason: e.NextSeason,
@@ -425,7 +425,7 @@ func (h *historyStore) pushRecent(e HistoryEntry, now int64) {
 // item has show/episode state but no recent row, so it wouldn't appear on the
 // continue rails. Unlike pushRecent it never moves an existing row, so a pull
 // can't reorder what you watched here. Callers hold the lock.
-func (h *historyStore) ensureRecent(e HistoryEntry, at int64) {
+func (h *HistoryStore) ensureRecent(e HistoryEntry, at int64) {
 	for _, r := range h.data.Recent {
 		if r.ShowID == e.ID && r.Season == e.Season && r.Episode == e.Episode {
 			return
@@ -436,9 +436,9 @@ func (h *historyStore) ensureRecent(e HistoryEntry, at int64) {
 	for i < len(h.data.Recent) && h.data.Recent[i].At >= at {
 		i++
 	}
-	h.data.Recent = append(h.data.Recent, recentEntry{})
+	h.data.Recent = append(h.data.Recent, RecentEntry{})
 	copy(h.data.Recent[i+1:], h.data.Recent[i:])
-	h.data.Recent[i] = recentEntry{
+	h.data.Recent[i] = RecentEntry{
 		ShowID: e.ID, Season: e.Season, Episode: e.Episode,
 		VideoID: e.VideoID, EpTitle: e.EpTitle, Total: e.EpisodeTotal, At: at,
 	}
@@ -452,15 +452,15 @@ func UpdatePosition(videoID string, pos, duration float64) {
 		return
 	}
 
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	ref, ok := hist.byVideo[videoID]
+	ref, ok := Hist.byVideo[videoID]
 	if !ok {
 		return
 	}
-	e := hist.ep(ref.showID, ref.key)
+	e := Hist.ep(ref.showID, ref.key)
 	if e == nil {
 		return
 	}
@@ -472,7 +472,7 @@ func UpdatePosition(videoID string, pos, duration float64) {
 		e.W = true
 		e.M = e.T
 	}
-	hist.touch()
+	Hist.touch()
 }
 
 // MarkPositionFinal stamps an episode's sync clock M after its last position
@@ -487,36 +487,36 @@ func MarkPositionFinal(videoID string) {
 		return
 	}
 
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	ref, ok := hist.byVideo[videoID]
+	ref, ok := Hist.byVideo[videoID]
 	if !ok {
 		return
 	}
-	if e := hist.ep(ref.showID, ref.key); e != nil {
+	if e := Hist.ep(ref.showID, ref.key); e != nil {
 		e.M = time.Now().Unix()
 	}
-	hist.touch()
+	Hist.touch()
 }
 
 // SetWatchedByEpisode marks an episode watched or unwatched, creating the
 // record if there isn't one.
 func SetWatchedByEpisode(e HistoryEntry, watched bool) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	sh := hist.show(e.ID, stremio.Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
-	key := epKey(e.Season, e.Episode)
+	sh := Hist.show(e.ID, stremio.Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
+	key := EpKey(e.Season, e.Episode)
 
 	st := sh.Eps[key]
 	if st == nil {
 		if !watched {
 			return // nothing recorded, nothing to unmark
 		}
-		st = &epState{}
+		st = &EpRecord{}
 		sh.Eps[key] = st
 	}
 
@@ -530,7 +530,7 @@ func SetWatchedByEpisode(e HistoryEntry, watched bool) {
 		st.P = 0
 	}
 	if e.VideoID != "" {
-		hist.byVideo[e.VideoID] = epRef{showID: e.ID, key: key}
+		Hist.byVideo[e.VideoID] = EpRef{showID: e.ID, key: key}
 	}
 
 	// Marking one episode is a deliberate act about that episode, so it
@@ -538,9 +538,9 @@ func SetWatchedByEpisode(e HistoryEntry, watched bool) {
 	// case that mustn't flood the list — see SetSeasonWatched.
 	if watched {
 		sh.SeenAt = now
-		hist.pushRecent(e, now)
+		Hist.pushRecent(e, now)
 	}
-	hist.touch()
+	Hist.touch()
 }
 
 func ToggleWatchedByEpisode(e HistoryEntry) bool {
@@ -555,21 +555,21 @@ func ToggleWatchedByEpisode(e HistoryEntry) bool {
 // records and 300 lines of history. Now it's 300 × 19 bytes of state and no
 // recent entries at all.
 func SetSeasonWatched(show stremio.Meta, season int, eps []stremio.Video, watched bool) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	sh := hist.show(show.ID, show)
+	sh := Hist.show(show.ID, show)
 	now := time.Now().Unix()
 
 	for _, v := range eps {
-		key := epKey(season, v.Episode)
+		key := EpKey(season, v.Episode)
 		st := sh.Eps[key]
 		if st == nil {
 			if !watched {
 				continue
 			}
-			st = &epState{}
+			st = &EpRecord{}
 			sh.Eps[key] = st
 		}
 
@@ -582,7 +582,7 @@ func SetSeasonWatched(show stremio.Meta, season int, eps []stremio.Video, watche
 			st.P = 0
 		}
 		if v.ID != "" {
-			hist.byVideo[v.ID] = epRef{showID: show.ID, key: key}
+			Hist.byVideo[v.ID] = EpRef{showID: show.ID, key: key}
 		}
 	}
 
@@ -598,14 +598,14 @@ func SetSeasonWatched(show stremio.Meta, season int, eps []stremio.Video, watche
 			}
 		}
 		sh.SeenAt = now
-		hist.pushRecent(HistoryEntry{
+		Hist.pushRecent(HistoryEntry{
 			Name: show.Name, ID: show.ID, Type: show.Type,
 			Source: show.Source, Year: show.Year,
 			Season: season, Episode: last.Episode, VideoID: last.ID,
 			EpTitle: last.Title, EpisodeTotal: len(eps),
 		}, now)
 	}
-	hist.touch()
+	Hist.touch()
 }
 
 // ── Outbound snapshot ─────────────────────────────────────────────────────────
@@ -629,13 +629,13 @@ type LocalLibraryEntry struct {
 
 // LocalLibrary snapshots every title with recorded state for pushing out.
 func LocalLibrary() []LocalLibraryEntry {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	out := make([]LocalLibraryEntry, 0, len(hist.data.Shows))
-	for id, sh := range hist.data.Shows {
-		var best *epState
+	out := make([]LocalLibraryEntry, 0, len(Hist.data.Shows))
+	for id, sh := range Hist.data.Shows {
+		var best *EpRecord
 		bestKey := ""
 		for k, e := range sh.Eps {
 			if best == nil || epMTime(e) > epMTime(best) {
@@ -652,7 +652,7 @@ func LocalLibrary() []LocalLibraryEntry {
 		}
 		var bf string
 		if episode > 0 {
-			bf = watchedBitfield(id, sh)
+			bf = WatchedBitfield(id, sh)
 		}
 		out = append(out, LocalLibraryEntry{
 			ID: id, Name: sh.Name, Type: sh.Type,
@@ -665,13 +665,13 @@ func LocalLibrary() []LocalLibraryEntry {
 	return out
 }
 
-// watchedBitfield renders a show's local watched episodes as Stremio's
+// WatchedBitfield renders a show's local watched episodes as Stremio's
 // per-episode bitfield. The index space is the episode order by season and
 // episode — the cached meta when the title has been browsed, otherwise the
 // episodes the store has recorded. A show known only sparsely can therefore
 // express only the episodes it has touched; one never recorded here has no
 // index to send. Callers hold the lock.
-func watchedBitfield(showID string, sh *showState) string {
+func WatchedBitfield(showID string, sh *ShowState) string {
 	eps := orderedEpisodes(showID, sh)
 	if len(eps) == 0 {
 		return ""
@@ -685,7 +685,7 @@ func watchedBitfield(showID string, sh *showState) string {
 	if len(epsFromMeta(showID)) == 0 {
 		last := -1
 		for i, oe := range eps {
-			if st := sh.Eps[epKey(oe[0], oe[1])]; st != nil && st.W {
+			if st := sh.Eps[EpKey(oe[0], oe[1])]; st != nil && st.W {
 				last = i
 			}
 		}
@@ -698,9 +698,9 @@ func watchedBitfield(showID string, sh *showState) string {
 	videos := make([]string, len(eps))
 	watched := map[string]bool{}
 	for i, oe := range eps {
-		v := stremioVideoID(showID, oe[0], oe[1])
+		v := StremioVideoID(showID, oe[0], oe[1])
 		videos[i] = v
-		if st := sh.Eps[epKey(oe[0], oe[1])]; st != nil && st.W {
+		if st := sh.Eps[EpKey(oe[0], oe[1])]; st != nil && st.W {
 			watched[v] = true
 		}
 	}
@@ -709,7 +709,7 @@ func watchedBitfield(showID string, sh *showState) string {
 
 // epMTime is an episode's real last-write clock, falling back to the old T for
 // records written before M existed.
-func epMTime(e *epState) int64 {
+func epMTime(e *EpRecord) int64 {
 	if e == nil {
 		return 0
 	}
@@ -723,16 +723,16 @@ func epMTime(e *epState) int64 {
 
 // LoadHistory renders the recent list as the flat entries the UI expects.
 func LoadHistory() HistoryList {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
-	return hist.recentEntries()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
+	return Hist.recentEntries()
 }
 
 // recentEntries is the unlocked form, so callers already holding the lock
 // don't have to drop it and retake it — a pattern that works until someone
 // edits it and then deadlocks.
-func (h *historyStore) recentEntries() HistoryList {
+func (h *HistoryStore) recentEntries() HistoryList {
 	out := HistoryList{Items: make([]HistoryEntry, 0, len(h.data.Recent))}
 	for _, r := range h.data.Recent {
 		sh := h.data.Shows[r.ShowID]
@@ -748,7 +748,7 @@ func (h *historyStore) recentEntries() HistoryList {
 			NextEpisode: r.NextEpisode, NextTitle: r.NextTitle,
 			NextReleased: r.NextRelease,
 		}
-		if st := sh.Eps[epKey(r.Season, r.Episode)]; st != nil {
+		if st := sh.Eps[EpKey(r.Season, r.Episode)]; st != nil {
 			e.Position, e.Duration, e.Watched = st.P, st.D, st.W
 		}
 		out.Items = append(out.Items, e)
@@ -775,12 +775,12 @@ type ShowSummary struct {
 // of the time. It's the wrong one for clearing out a show you've finished —
 // that means deleting thirty rows one at a time.
 func HistoryShows() []ShowSummary {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	out := make([]ShowSummary, 0, len(hist.data.Shows))
-	for id, sh := range hist.data.Shows {
+	out := make([]ShowSummary, 0, len(Hist.data.Shows))
+	for id, sh := range Hist.data.Shows {
 		n := 0
 		for _, e := range sh.Eps {
 			if e.W || e.P > 0 {
@@ -807,27 +807,27 @@ func HistoryShows() []ShowSummary {
 
 // ClearShow removes a title and everything under it.
 func ClearShow(id string) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	delete(hist.data.Shows, id)
+	delete(Hist.data.Shows, id)
 
-	kept := hist.data.Recent[:0]
-	for _, r := range hist.data.Recent {
+	kept := Hist.data.Recent[:0]
+	for _, r := range Hist.data.Recent {
 		if r.ShowID != id {
 			kept = append(kept, r)
 		}
 	}
-	clear(hist.data.Recent[len(kept):]) // drop the tail's strings
-	hist.data.Recent = kept
+	clear(Hist.data.Recent[len(kept):]) // drop the tail's strings
+	Hist.data.Recent = kept
 
-	hist.reindex()
-	hist.touch()
+	Hist.reindex()
+	Hist.touch()
 }
 
 // showInRecent reports whether any history row still refers to a show.
-func (h *historyStore) showInRecent(id string) bool {
+func (h *HistoryStore) showInRecent(id string) bool {
 	for _, r := range h.data.Recent {
 		if r.ShowID == id {
 			return true
@@ -847,22 +847,22 @@ func (h *historyStore) showInRecent(id string) bool {
 // recentEntries, which skips any row whose show is missing, so its indices
 // can drift from data.Recent and a delete would hit the neighbour.
 func ClearHistoryEntry(e HistoryEntry) {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	idx := slices.IndexFunc(hist.data.Recent, func(r recentEntry) bool {
+	idx := slices.IndexFunc(Hist.data.Recent, func(r RecentEntry) bool {
 		return r.ShowID == e.ID && r.Season == e.Season && r.Episode == e.Episode
 	})
 	if idx < 0 {
 		return
 	}
 
-	r := hist.data.Recent[idx]
-	hist.data.Recent = append(hist.data.Recent[:idx], hist.data.Recent[idx+1:]...)
+	r := Hist.data.Recent[idx]
+	Hist.data.Recent = append(Hist.data.Recent[:idx], Hist.data.Recent[idx+1:]...)
 
-	if sh, ok := hist.data.Shows[r.ShowID]; ok {
-		delete(sh.Eps, epKey(r.Season, r.Episode))
+	if sh, ok := Hist.data.Shows[r.ShowID]; ok {
+		delete(sh.Eps, EpKey(r.Season, r.Episode))
 
 		// The show record goes only when nothing needs it: no episode state
 		// and no other history row pointing at it.
@@ -870,26 +870,26 @@ func ClearHistoryEntry(e HistoryEntry) {
 		// recentEntries drops any row whose show is missing, without
 		// complaint — so removing the show one row too early would take
 		// unrelated rows down with it and look like they were never there.
-		if len(sh.Eps) == 0 && !hist.showInRecent(r.ShowID) {
-			delete(hist.data.Shows, r.ShowID)
+		if len(sh.Eps) == 0 && !Hist.showInRecent(r.ShowID) {
+			delete(Hist.data.Shows, r.ShowID)
 		}
 	}
 	if r.VideoID != "" {
-		delete(hist.byVideo, r.VideoID)
+		delete(Hist.byVideo, r.VideoID)
 	}
 
-	hist.touch()
+	Hist.touch()
 }
 
 // ClearAllHistory drops everything, watched state included.
 func ClearAllHistory() {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	hist.data = historyFile{Version: historyVer, Shows: map[string]*showState{}}
-	hist.byVideo = map[string]epRef{}
-	hist.touch()
+	Hist.data = HistoryFile{Version: HistoryVer, Shows: map[string]*ShowState{}}
+	Hist.byVideo = map[string]EpRef{}
+	Hist.touch()
 }
 
 // ── Continue watching ─────────────────────────────────────────────────────────
@@ -918,14 +918,14 @@ func inProgress(e HistoryEntry) bool {
 // most recent thing if it isn't finished, otherwise the episode after it,
 // otherwise anything else left part-watched.
 func ContinueTarget() *ContinueItem {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
 	if inProgressValid {
 		return inProgressCache
 	}
-	items := hist.recentEntries().Items
+	items := Hist.recentEntries().Items
 
 	inProgressCache = nil
 	inProgressValid = true
@@ -954,8 +954,8 @@ func ContinueTarget() *ContinueItem {
 	// of the series, or a season we've no list for — so there's nothing to
 	// offer rather than an episode that doesn't exist.
 	if top.Type == "series" && top.NextVideoID != "" {
-		if sh := hist.data.Shows[top.ID]; sh != nil {
-			nextKey := epKey(top.NextSeason, top.NextEpisode)
+		if sh := Hist.data.Shows[top.ID]; sh != nil {
+			nextKey := EpKey(top.NextSeason, top.NextEpisode)
 			st := sh.Eps[nextKey]
 
 			if st == nil || !st.W {
@@ -1004,11 +1004,11 @@ func ContinueTarget() *ContinueItem {
 // the middle of", which is a different question — you're usually three or four
 // shows deep and the single most recent one isn't always the one you want.
 func ContinueList(n int) []ContinueItem {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
-	items := hist.recentEntries().Items
+	items := Hist.recentEntries().Items
 	seen := map[string]bool{}
 	out := make([]ContinueItem, 0, n)
 
@@ -1020,7 +1020,7 @@ func ContinueList(n int) []ContinueItem {
 			continue // one row per show, at whatever the latest point is
 		}
 
-		sh := hist.data.Shows[e.ID]
+		sh := Hist.data.Shows[e.ID]
 		if sh == nil {
 			continue
 		}
@@ -1038,7 +1038,7 @@ func ContinueList(n int) []ContinueItem {
 			// next episode, so it simply drops out of the list.
 			seen[e.ID] = true
 
-			next := sh.Eps[epKey(e.NextSeason, e.NextEpisode)]
+			next := sh.Eps[EpKey(e.NextSeason, e.NextEpisode)]
 			if next != nil && next.W {
 				continue // already seen it too
 			}
@@ -1075,12 +1075,12 @@ func ContinueList(n int) []ContinueItem {
 
 // RecentlyWatched returns the last few things you finished, newest first.
 func RecentlyWatched(n int) []HistoryEntry {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
 	out := make([]HistoryEntry, 0, n)
-	for _, e := range hist.recentEntries().Items {
+	for _, e := range Hist.recentEntries().Items {
 		if !e.Watched {
 			continue
 		}
@@ -1102,12 +1102,12 @@ type Stats struct {
 }
 
 func HistoryStats() Stats {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
 	var st Stats
-	for _, sh := range hist.data.Shows {
+	for _, sh := range Hist.data.Shows {
 		counted := false
 		for k, e := range sh.Eps {
 			if !e.W {

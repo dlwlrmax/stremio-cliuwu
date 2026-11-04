@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"bytes"
@@ -284,7 +284,7 @@ func (e LocalLibraryEntry) toLibraryItem() libraryItem {
 	if e.Episode == 0 && e.Season == 0 {
 		typ, videoID = "movie", e.ID
 	} else {
-		videoID = stremioVideoID(e.ID, e.Season, e.Episode)
+		videoID = StremioVideoID(e.ID, e.Season, e.Episode)
 	}
 
 	mtime := time.Unix(e.MTime, 0).UTC().Format(time.RFC3339)
@@ -316,9 +316,9 @@ func (e LocalLibraryEntry) toLibraryItem() libraryItem {
 // shows up under continue watching without a play here first. Fully-watched
 // items get no row, so the rails aren't flooded with things you've finished.
 func MergeLibrary(items []libraryItem) int {
-	hist.mu.Lock()
-	defer hist.mu.Unlock()
-	hist.load()
+	Hist.mu.Lock()
+	defer Hist.mu.Unlock()
+	Hist.load()
 
 	applied := 0
 	for _, it := range items {
@@ -329,28 +329,28 @@ func MergeLibrary(items []libraryItem) int {
 		key := "0:0"
 		season, episode := 0, 0
 		if it.Type == "series" {
-			s, e, ok := episodeOfVideoID(it.ID, it.State.VideoID)
+			s, e, ok := EpisodeOfVideoID(it.ID, it.State.VideoID)
 			if !ok {
 				continue // no usable episode pointer — nothing to record
 			}
 			season, episode = s, e
-			key = epKey(s, e)
+			key = EpKey(s, e)
 		}
 
 		mtime := parseStremioTime(it.MTime)
-		if local := hist.ep(it.ID, key); local != nil && epMTime(local) >= mtime {
+		if local := Hist.ep(it.ID, key); local != nil && epMTime(local) >= mtime {
 			// Local progress wins this episode, but a poster is show-level
 			// state, not progress: adopt the server's when we have none, so
 			// the next push can't send an empty poster over it.
 			if it.Poster != "" {
-				if sh := hist.data.Shows[it.ID]; sh != nil && sh.Poster == "" {
+				if sh := Hist.data.Shows[it.ID]; sh != nil && sh.Poster == "" {
 					sh.Poster = it.Poster
 				}
 			}
 			continue // local is newer; remote loses the tie
 		}
 
-		sh := hist.show(it.ID, stremio.Meta{Name: it.Name, Type: it.Type, Source: "stremio"})
+		sh := Hist.show(it.ID, stremio.Meta{Name: it.Name, Type: it.Type, Source: "stremio"})
 		if sh.Poster == "" {
 			sh.Poster = it.Poster
 		}
@@ -359,12 +359,12 @@ func MergeLibrary(items []libraryItem) int {
 		// Apply it before the single-episode fields below so the anchor's real
 		// position and duration still win over "watched implies finished".
 		if it.Type == "series" && it.State.Watched != "" {
-			hist.applyWatchedBitfield(sh, it.ID, it.State.Watched, mtime)
+			Hist.applyWatchedBitfield(sh, it.ID, it.State.Watched, mtime)
 		}
 
 		st := sh.Eps[key]
 		if st == nil {
-			st = &epState{}
+			st = &EpRecord{}
 			sh.Eps[key] = st
 		}
 		st.W = it.State.TimesWatched > 0 || it.State.FlaggedWatched > 0
@@ -375,7 +375,7 @@ func MergeLibrary(items []libraryItem) int {
 		sh.SeenAt = max(sh.SeenAt, mtime)
 
 		if !st.W && it.State.TimeOffset > 0 {
-			hist.ensureRecent(HistoryEntry{
+			Hist.ensureRecent(HistoryEntry{
 				Name: it.Name, ID: it.ID, Type: it.Type, Source: "stremio",
 				Season: season, Episode: episode, VideoID: it.State.VideoID,
 				Position: st.P, Duration: st.D, WatchedAt: time.Unix(mtime, 0),
@@ -384,8 +384,8 @@ func MergeLibrary(items []libraryItem) int {
 		applied++
 	}
 
-	hist.reindex()
-	hist.touch() // dirty + invalidateInProgress + debounced flush
+	Hist.reindex()
+	Hist.touch() // dirty + invalidateInProgress + debounced flush
 	return applied
 }
 
@@ -394,7 +394,7 @@ func MergeLibrary(items []libraryItem) int {
 // past the episodes we know are ignored. The anchor — the most recently
 // watched episode — is marked directly, so it lands even when it isn't in the
 // local ordering yet. Callers hold the lock.
-func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mtime int64) {
+func (h *HistoryStore) applyWatchedBitfield(sh *ShowState, showID, bf string, mtime int64) {
 	anchorID, length, bits, err := bitfield.Decode(bf)
 	if err != nil {
 		return
@@ -405,10 +405,10 @@ func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mt
 		if episode <= 0 {
 			return
 		}
-		key := epKey(season, episode)
+		key := EpKey(season, episode)
 		st := sh.Eps[key]
 		if st == nil {
-			st = &epState{}
+			st = &EpRecord{}
 			sh.Eps[key] = st
 		}
 		st.W = true
@@ -423,25 +423,25 @@ func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mt
 	// anchor missing from our list there is nothing to align to, and
 	// stremio-core treats that as a blank field too; only the anchor itself,
 	// marked below, is trusted.
-	if ai := anchorIndex(showID, anchorID, eps); ai >= 0 {
+	if ai := AnchorIndex(showID, anchorID, eps); ai >= 0 {
 		for _, i := range bitfield.Aligned(length, ai, len(eps), bits) {
 			mark(eps[i][0], eps[i][1])
 		}
 	}
-	if s, e, ok := episodeOfVideoID(showID, anchorID); ok {
+	if s, e, ok := EpisodeOfVideoID(showID, anchorID); ok {
 		mark(s, e)
 	}
 }
 
-// anchorIndex finds the anchor video in the ordered episode list. Matched on
+// AnchorIndex finds the anchor video in the ordered episode list. Matched on
 // season and episode rather than the id string, which may be spelled
 // differently by the other side. -1 when it isn't there, or when the id isn't
 // one of this show's episode ids.
-func anchorIndex(showID, anchorID string, eps [][2]int) int {
+func AnchorIndex(showID, anchorID string, eps [][2]int) int {
 	if !strings.HasPrefix(anchorID, showID+":") {
 		return -1
 	}
-	s, e, ok := episodeOfVideoID(showID, anchorID)
+	s, e, ok := EpisodeOfVideoID(showID, anchorID)
 	if !ok {
 		return -1
 	}
@@ -453,20 +453,20 @@ func anchorIndex(showID, anchorID string, eps [][2]int) int {
 	return -1
 }
 
-// stremioVideoID is the id Stremio gives an episode: "<showID>:<season>:<episode>",
+// StremioVideoID is the id Stremio gives an episode: "<showID>:<season>:<episode>",
 // except for Kitsu titles, whose single season is left out ("kitsu:1234:5").
-func stremioVideoID(showID string, season, episode int) string {
+func StremioVideoID(showID string, season, episode int) string {
 	if strings.HasPrefix(showID, "kitsu:") && season == 1 {
 		return fmt.Sprintf("%s:%d", showID, episode)
 	}
 	return fmt.Sprintf("%s:%d:%d", showID, season, episode)
 }
 
-// episodeOfVideoID is the reverse of stremioVideoID. Knowing the show id lets
+// EpisodeOfVideoID is the reverse of stremioVideoID. Knowing the show id lets
 // it tell "kitsu:1234:5" (episode 5) from "tt1:2:5" (season 2, episode 5); the
 // bare last-two-segments reading in videoEpisode takes the Kitsu id for a
 // season. An id that doesn't start with the show id falls back to that.
-func episodeOfVideoID(showID, videoID string) (int, int, bool) {
+func EpisodeOfVideoID(showID, videoID string) (int, int, bool) {
 	rest, ok := strings.CutPrefix(videoID, showID+":")
 	if !ok || showID == "" {
 		return videoEpisode(videoID)
@@ -523,30 +523,30 @@ func parseStremioTime(s string) int64 {
 
 // ── UI bridge ─────────────────────────────────────────────────────────────────
 
-// stremioSyncDoneMsg carries a finished login or sync back to the settings
+// StremioSyncDoneMsg carries a finished login or sync back to the settings
 // screen. It's a plain tea.Msg so the network work can run in a command
 // goroutine without blocking Update.
-type stremioSyncDoneMsg struct {
-	pulled   int
-	pushed   int
-	err      error
-	signedIn bool
-	email    string
+type StremioSyncDoneMsg struct {
+	Pulled   int
+	Pushed   int
+	Err      error
+	SignedIn bool
+	Email    string
 }
 
-// historySyncedMsg says a background pull changed local history, so the UI
+// HistorySyncedMsg says a background pull changed local history, so the UI
 // can drop its caches and rebuild the continue-watching row.
-type historySyncedMsg struct{}
+type HistorySyncedMsg struct{}
 
 // syncBusy serialises the network syncs. A file ending can fire a push while
 // the boot pull or a manual sync is still in flight; overlapping passes would
 // both merge the same remote library and race each other's puts.
 var syncBusy atomic.Bool
 
-// autoSyncPush pushes this device's history after a file ends. Callers check
+// AutoSyncPush pushes this device's history after a file ends. Callers check
 // the AutoSync setting first. It is silent on failure — the next manual sync
 // reports the counts — and skips if another sync owns the flag.
-func autoSyncPush() {
+func AutoSyncPush() {
 	a := LoadAccount()
 	if a.AuthKey == "" || !syncBusy.CompareAndSwap(false, true) {
 		return
@@ -555,9 +555,9 @@ func autoSyncPush() {
 	_, _, _ = syncAccount(a.AuthKey)
 }
 
-// autoSyncPull runs the boot sync once the app is up and tells the UI when a
+// AutoSyncPull runs the boot sync once the app is up and tells the UI when a
 // pull landed so continue watching picks it up. Silent on failure.
-func autoSyncPull(prog *tea.Program) {
+func AutoSyncPull(prog *tea.Program) {
 	a := LoadAccount()
 	if a.AuthKey == "" || !syncBusy.CompareAndSwap(false, true) {
 		return
@@ -565,42 +565,42 @@ func autoSyncPull(prog *tea.Program) {
 	_, _, err := syncAccount(a.AuthKey)
 	syncBusy.Store(false)
 	if err == nil {
-		prog.Send(historySyncedMsg{})
+		prog.Send(HistorySyncedMsg{})
 	}
 }
 
-// stremioLoginCmd logs in, persists the account, then immediately syncs so
+// StremioLoginCmd logs in, persists the account, then immediately syncs so
 // signing in is one action rather than two.
-func stremioLoginCmd(email, password string) tea.Cmd {
+func StremioLoginCmd(email, password string) tea.Cmd {
 	return func() tea.Msg {
 		a, err := StremioLogin(email, password)
 		if err != nil {
-			return stremioSyncDoneMsg{err: err}
+			return StremioSyncDoneMsg{Err: err}
 		}
 		if err := SaveAccount(a); err != nil {
-			return stremioSyncDoneMsg{err: err}
+			return StremioSyncDoneMsg{Err: err}
 		}
 		if !syncBusy.CompareAndSwap(false, true) {
-			return stremioSyncDoneMsg{signedIn: true, email: a.Email}
+			return StremioSyncDoneMsg{SignedIn: true, Email: a.Email}
 		}
 		pulled, pushed, err := syncAccount(a.AuthKey)
 		syncBusy.Store(false)
-		return stremioSyncDoneMsg{pulled: pulled, pushed: pushed, err: err, signedIn: true, email: a.Email}
+		return StremioSyncDoneMsg{Pulled: pulled, Pushed: pushed, Err: err, SignedIn: true, Email: a.Email}
 	}
 }
 
-// stremioSyncCmd runs the two-way sync for an already signed-in account.
-func stremioSyncCmd() tea.Cmd {
+// StremioSyncCmd runs the two-way sync for an already signed-in account.
+func StremioSyncCmd() tea.Cmd {
 	return func() tea.Msg {
 		a := LoadAccount()
 		if a.AuthKey == "" {
-			return stremioSyncDoneMsg{err: fmt.Errorf("not signed in")}
+			return StremioSyncDoneMsg{Err: fmt.Errorf("not signed in")}
 		}
 		if !syncBusy.CompareAndSwap(false, true) {
-			return stremioSyncDoneMsg{err: fmt.Errorf("sync already running")}
+			return StremioSyncDoneMsg{Err: fmt.Errorf("sync already running")}
 		}
 		pulled, pushed, err := syncAccount(a.AuthKey)
 		syncBusy.Store(false)
-		return stremioSyncDoneMsg{pulled: pulled, pushed: pushed, err: err}
+		return StremioSyncDoneMsg{Pulled: pulled, Pushed: pushed, Err: err}
 	}
 }

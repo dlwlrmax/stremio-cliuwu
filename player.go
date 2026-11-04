@@ -14,6 +14,7 @@ import (
 	"slices"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
@@ -104,9 +105,9 @@ type PlayRequest struct {
 	Label     string
 	URL       string
 	Resume    float64
-	Entry     HistoryEntry    // written to history when playback starts
-	Queue     *EpQueue        // non-nil for series, drives autoplay
-	Addons    []stremio.Addon // needed to resolve the next episode
+	Entry     store.HistoryEntry // written to history when playback starts
+	Queue     *EpQueue           // non-nil for series, drives autoplay
+	Addons    []stremio.Addon    // needed to resolve the next episode
 
 	// Carried from the chosen stream so the subtitle picker can ask for
 	// this exact file rather than the title in general.
@@ -119,7 +120,7 @@ type PlayRequest struct {
 // ── Player ────────────────────────────────────────────────────────────────────
 
 type Player struct {
-	cfg  AppConfig
+	cfg  store.AppConfig
 	prog *tea.Program
 
 	mu      sync.Mutex
@@ -146,12 +147,12 @@ type Player struct {
 	lastEmit   int          // last whole second pushed to the UI
 }
 
-func NewPlayer(cfg AppConfig) *Player {
+func NewPlayer(cfg store.AppConfig) *Player {
 	return &Player{cfg: cfg, pending: map[uint32]chan map[string]any{}}
 }
 
-func (p *Player) Attach(prog *tea.Program) { p.prog = prog }
-func (p *Player) SetConfig(cfg AppConfig)  { p.mu.Lock(); p.cfg = cfg; p.mu.Unlock() }
+func (p *Player) Attach(prog *tea.Program)      { p.prog = prog }
+func (p *Player) SetConfig(cfg store.AppConfig) { p.mu.Lock(); p.cfg = cfg; p.mu.Unlock() }
 
 func (p *Player) emit(msg tea.Msg) {
 	if p.prog != nil {
@@ -361,7 +362,7 @@ func (p *Player) gone() {
 	p.mu.Unlock()
 
 	if now != nil && st.Duration > 0 && st.Pos > 0 {
-		UpdatePosition(now.VideoID, st.Pos, st.Duration)
+		store.UpdatePosition(now.VideoID, st.Pos, st.Duration)
 	}
 	p.emit(PlayerStateMsg{})
 }
@@ -383,7 +384,7 @@ func (p *Player) sendAsync(fn func()) { go fn() }
 func mpvTitle(req PlayRequest) string {
 	e := req.Entry
 
-	mode := cfgNow().MpvTitle
+	mode := store.CfgNow().MpvTitle
 	if mode == "" || mode == "default" {
 		return ""
 	}
@@ -605,13 +606,13 @@ func (p *Player) onProperty(name string, data any) {
 	p.mu.Unlock()
 
 	if showID != "" {
-		go SetSubPref(showID, subOff, "")
+		go store.SetSubPref(showID, store.SubOff, "")
 	}
 	if pickShow != "" {
 		p.sendAsync(func() { p.rememberEmbeddedPick(pickGen, pickSeq, pickShow, pickSid) })
 	}
 	if save {
-		go UpdatePosition(videoID, st.Pos, st.Duration)
+		go store.UpdatePosition(videoID, st.Pos, st.Duration)
 	}
 	if prefetch && now != nil {
 		p.emit(PrefetchNextMsg{Prev: *now})
@@ -665,10 +666,10 @@ func (p *Player) maybeAutoSubtitle() {
 	// A per-show preference is explicit intent, so it applies even when
 	// autoloading is off. It only exists for a series with a queue; movies
 	// and "other" always take the global path below.
-	var pref ShowSubPref
+	var pref store.ShowSubPref
 	hasPref := false
 	if now != nil && now.MediaType == "series" && now.Queue != nil {
-		pref, hasPref = GetSubPref(now.Entry.ID)
+		pref, hasPref = store.GetSubPref(now.Entry.ID)
 	}
 
 	// "other" is a debrid library / local file: there is no episode id worth
@@ -686,7 +687,7 @@ func (p *Player) maybeAutoSubtitle() {
 
 	// This show was last left with subtitles off. mpv's --slang may still have
 	// picked an embedded track on its own, so switch it off explicitly.
-	if hasPref && pref.Lang == subOff {
+	if hasPref && pref.Lang == store.SubOff {
 		p.sendAsync(func() {
 			p.mu.Lock()
 			stale := p.playGen != gen
@@ -788,7 +789,7 @@ func (p *Player) maybeAutoSubtitle() {
 // caller has already tried the show language inside the file (tryEmbedded), so
 // its tier here is the plugins; a language absent from both falls through to
 // the normal per-tier handling for the remaining languages.
-func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []stremio.Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
+func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []stremio.Subtitle, shipped map[string]bool, pref store.ShowSubPref, fallback []string) {
 	lang := pref.Lang
 
 	tiers := []string{lang}
@@ -924,7 +925,7 @@ func (p *Player) rememberEmbeddedPick(gen, seq uint64, showID string, sid int) {
 	}
 	raw, _ := resp["data"].([]any)
 	if lang, title, ok := embeddedSubAt(raw, sid); ok {
-		SetEmbeddedPref(showID, lang, title)
+		store.SetEmbeddedPref(showID, lang, title)
 	}
 }
 
@@ -1161,19 +1162,19 @@ func (p *Player) onEndFile(reason string) {
 	// read loop (sendAsync) and silent; an error end never finished anything
 	// to push.
 	if autoSync && reason != "error" {
-		defer p.sendAsync(autoSyncPush)
+		defer p.sendAsync(store.AutoSyncPush)
 	}
 
 	// Stamp the final position as the last real change so the push above sees
 	// it as newer than the server's copy. Registered after the push defer so
 	// it runs first (defers are LIFO), and after the switch's UpdatePosition
 	// because defers run on return.
-	defer MarkPositionFinal(now.VideoID)
+	defer store.MarkPositionFinal(now.VideoID)
 
 	switch reason {
 	case "eof":
 		// Watched in full — pin it at 100% so history is unambiguous.
-		UpdatePosition(now.VideoID, st.Duration, st.Duration)
+		store.UpdatePosition(now.VideoID, st.Duration, st.Duration)
 
 		// A queued stream beats everything: you've already chosen, so don't
 		// open a picker or announce anything, just play it. Off the read loop,
@@ -1211,7 +1212,7 @@ func (p *Player) onEndFile(reason string) {
 		p.emit(PlayerErrMsg{Err: errors.New("mpv couldn't play that stream — R to refetch, or pick another")})
 	default:
 		if st.Duration > 0 && st.Pos > 0 {
-			UpdatePosition(now.VideoID, st.Pos, st.Duration)
+			store.UpdatePosition(now.VideoID, st.Pos, st.Duration)
 		}
 	}
 
@@ -1260,10 +1261,10 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	p.mu.Unlock()
 
 	if prev != nil && prevSt.Duration > 0 && prevSt.Pos > 0 {
-		UpdatePosition(prev.VideoID, prevSt.Pos, prevSt.Duration)
+		store.UpdatePosition(prev.VideoID, prevSt.Pos, prevSt.Duration)
 	}
 	if req.Entry.ID != "" {
-		AddHistory(req.Entry, histMax)
+		store.AddHistory(req.Entry, histMax)
 	}
 
 	// Set before the load so mpv has it for the first frame. It is a global
@@ -1282,7 +1283,7 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	// --slang selection.
 	sidMode := "auto"
 	if req.MediaType == "series" && req.Queue != nil {
-		if pref, ok := GetSubPref(req.Entry.ID); ok && pref.Lang == subOff {
+		if pref, ok := store.GetSubPref(req.Entry.ID); ok && pref.Lang == store.SubOff {
 			sidMode = "no"
 		}
 	}
@@ -1310,11 +1311,11 @@ func (p *Player) Stop() tea.Cmd {
 		p.mu.Unlock()
 
 		if now != nil && st.Duration > 0 && st.Pos > 0 {
-			UpdatePosition(now.VideoID, st.Pos, st.Duration)
-			MarkPositionFinal(now.VideoID)
+			store.UpdatePosition(now.VideoID, st.Pos, st.Duration)
+			store.MarkPositionFinal(now.VideoID)
 		}
 		if autoSync && now != nil {
-			p.sendAsync(autoSyncPush)
+			p.sendAsync(store.AutoSyncPush)
 		}
 		p.command("quit")
 		return PlayerStateMsg{}
@@ -1344,6 +1345,6 @@ func (p *Player) Shutdown() {
 	now, st := p.now, p.state
 	p.mu.Unlock()
 	if now != nil && st.Duration > 0 && st.Pos > 0 {
-		UpdatePosition(now.VideoID, st.Pos, st.Duration)
+		store.UpdatePosition(now.VideoID, st.Pos, st.Duration)
 	}
 }

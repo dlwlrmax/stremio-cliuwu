@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"os"
@@ -22,32 +22,29 @@ func LoadConfig() AppConfig {
 
 // cfgSnap is the config as of the last save, for goroutines.
 //
-// ctx.cfg is edited in place on the UI goroutine, which is fine there but a
+// The app's live config is edited in place on the UI goroutine, which is fine there but a
 // data race for the poster fetchers, the download worker and the player's read
 // loop. They read this copy instead; SaveConfig, which every edit ends with,
 // refreshes it.
 var cfgSnap atomic.Pointer[AppConfig]
 
-func publishCfg(c AppConfig) { cfgSnap.Store(&c) }
+func PublishCfg(c AppConfig) { cfgSnap.Store(&c) }
 
-// cfgNow returns the last published config. Safe from any goroutine.
-func cfgNow() AppConfig {
+// CfgNow returns the last published config. Safe from any goroutine.
+func CfgNow() AppConfig {
 	if p := cfgSnap.Load(); p != nil {
 		return *p
-	}
-	if ctx != nil {
-		return ctx.cfg
 	}
 	return AppConfig{}
 }
 
 func SaveConfig(c AppConfig) error {
-	publishCfg(c)
+	PublishCfg(c)
 	return jsonio.Write(paths.CfgFile(), c)
 }
 
-// detectMpv looks for an mpv binary in the usual places.
-func detectMpv() string {
+// DetectMpv looks for an mpv binary in the usual places.
+func DetectMpv() string {
 	if p, err := exec.LookPath("mpv"); err == nil {
 		return p
 	}

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"stremio-cliuwu/internal/cache"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -384,7 +385,7 @@ func posterVariants(url string, biggest bool) []string {
 		// The configured quality first, then the rest largest-first as
 		// fallbacks in case metahub has nothing at that size.
 		want := "large"
-		if q := cfgNow().PosterQuality; q != "" {
+		if q := store.CfgNow().PosterQuality; q != "" {
 			want = q
 		}
 		sizes = []string{want}
@@ -443,7 +444,7 @@ func posterImg(url string) (*image.RGBA, bool) {
 
 // FetchPoster downloads and renders a poster. Safe to call from a goroutine.
 func FetchPoster(url string, maxW, maxH int) string {
-	if url == "" || !cfgNow().Posters {
+	if url == "" || !store.CfgNow().Posters {
 		return ""
 	}
 

@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"sort"
@@ -12,7 +12,7 @@ import (
 // list when the title has been browsed; otherwise only the episodes the store
 // has already recorded can be addressed, because an episode never touched
 // locally has no index to send or receive. Callers hold hist.mu.
-func orderedEpisodes(showID string, sh *showState) [][2]int {
+func orderedEpisodes(showID string, sh *ShowState) [][2]int {
 	if eps := epsFromMeta(showID); len(eps) > 0 {
 		return eps
 	}
@@ -35,7 +35,7 @@ func epsFromMeta(showID string) [][2]int {
 	return out
 }
 
-func epsFromStore(sh *showState) [][2]int {
+func epsFromStore(sh *ShowState) [][2]int {
 	if sh == nil {
 		return nil
 	}

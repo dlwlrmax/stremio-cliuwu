@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -43,14 +44,14 @@ type continuePanel struct {
 	manual bool
 	w, h   int
 
-	items     []ContinueItem
+	items     []store.ContinueItem
 	downloads []Download
-	watched   []HistoryEntry
-	next      *ContinueItem      // what w resumes
-	epVideo   stremio.Video      // episode record, for a series
-	epMovie   stremio.MetaDetail // meta, for a film
-	epKey     string             // which target the two above belong to
-	stats     Stats
+	watched   []store.HistoryEntry
+	next      *store.ContinueItem // what w resumes
+	epVideo   stremio.Video       // episode record, for a series
+	epMovie   stremio.MetaDetail  // meta, for a film
+	epKey     string              // which target the two above belong to
+	stats     store.Stats
 
 	// actions is the flat numbered list across all sections, so 1-9 means one
 	// thing regardless of which section a row sits in.
@@ -66,7 +67,7 @@ func newContinuePanel() continuePanel { return continuePanel{} }
 
 // isFilmEntry tells a film from an episode. Season 0 alone doesn't: it is also
 // the specials season, so a film is the entry with no episode at all.
-func isFilmEntry(e HistoryEntry) bool { return e.Season <= 0 && e.Episode <= 0 }
+func isFilmEntry(e store.HistoryEntry) bool { return e.Season <= 0 && e.Episode <= 0 }
 
 func (p *continuePanel) On() bool { return p.on }
 
@@ -98,14 +99,14 @@ func (p *continuePanel) Refresh() {
 		return
 	}
 
-	p.items = ContinueList(continuePanelMax)
+	p.items = store.ContinueList(continuePanelMax)
 
 	// Everything except cleared entries: a finished download is exactly what
 	// you came to the panel to check.
 	p.downloads = ctx.downloader.Snapshot()
-	p.watched = RecentlyWatched(continuePanelMax)
-	p.next = ContinueTarget()
-	p.stats = HistoryStats()
+	p.watched = store.RecentlyWatched(continuePanelMax)
+	p.next = store.ContinueTarget()
+	p.stats = store.HistoryStats()
 }
 
 // Count is how many entries are numbered, for the key hint.
@@ -131,7 +132,7 @@ func (p *continuePanel) SetTargetInfo(m targetInfoMsg) {
 // it often doesn't match what the addon actually calls that episode — the
 // fetch then matches on season and episode, and an id comparison would
 // wrongly conclude the result was for something else and hide the synopsis.
-func targetKey(e HistoryEntry) string {
+func targetKey(e store.HistoryEntry) string {
 	if e.VideoID != "" {
 		return e.VideoID
 	}
@@ -140,9 +141,9 @@ func targetKey(e HistoryEntry) string {
 
 // NextEntry is what w resumes, so the caller can decide whether the episode
 // it already fetched is still the right one.
-func (p *continuePanel) NextEntry() (HistoryEntry, bool) {
+func (p *continuePanel) NextEntry() (store.HistoryEntry, bool) {
 	if p.next == nil {
-		return HistoryEntry{}, false
+		return store.HistoryEntry{}, false
 	}
 	return p.next.Entry, true
 }
@@ -152,7 +153,7 @@ func (p *continuePanel) NextEntry() (HistoryEntry, bool) {
 // Neither an episode overview nor a film's description is in history — only
 // the title — so this is the one thing on the panel that needs the network.
 // Both underlying calls cache, so it's one request per title per session.
-func FetchTargetInfo(e HistoryEntry) tea.Cmd {
+func FetchTargetInfo(e store.HistoryEntry) tea.Cmd {
 	return func() tea.Msg {
 		if e.ID == "" {
 			return targetInfoMsg{}
@@ -353,7 +354,7 @@ func (p *continuePanel) View() string {
 
 // episodeBlock renders the continue target the way the info panel renders an
 // episode: identifier, title, show, air date, then the synopsis.
-func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
+func (p *continuePanel) episodeBlock(e store.HistoryEntry, budget int) []string {
 	wrap := lipgloss.NewStyle().Width(p.w)
 	var out []string
 

@@ -14,6 +14,7 @@ import (
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/store"
 	"strings"
 	"sync"
 	"time"
@@ -201,16 +202,6 @@ func extFromURL(raw string) string {
 	return ".mkv"
 }
 
-// Naming is pattern-driven so it can be changed without a rebuild.
-// Placeholders: {title} {year} {show} {season} {episode}
-//
-// Either slash makes a folder separator. When "organise downloads" is off only the
-// last segment is used, so one setting controls depth for both patterns.
-const (
-	DefaultMoviePattern   = "Movies/({year}) {title}"
-	DefaultEpisodePattern = "{show}/Season {season}/{episode} {title}"
-)
-
 var spaceRun = regexp.MustCompile(`\s+`)
 
 // tidySegment cleans up after a placeholder resolved to nothing — an absent
@@ -254,7 +245,7 @@ func expandPattern(pattern string, vals map[string]string) []string {
 // A season pack keeps its layout rather than being flattened into one folder
 // of similarly-named files.
 func LibraryPath(root, pack, rel string) string {
-	if !cfgNow().DownloadFolders {
+	if !store.CfgNow().DownloadFolders {
 		return filepath.Join(root, safeName(baseName(rel)))
 	}
 
@@ -280,14 +271,14 @@ func DownloadPath(root string, t streamTarget, url string) string {
 		if name == "" {
 			name = t.Label
 		}
-		segs = expandPattern(cfgNow().MoviePattern, map[string]string{
+		segs = expandPattern(store.CfgNow().MoviePattern, map[string]string{
 			"title": name,
 			"year":  t.Meta.Year,
 		})
 	} else {
 		q := t.Queue
 		v := q.Episodes[q.Index]
-		segs = expandPattern(cfgNow().EpisodePattern, map[string]string{
+		segs = expandPattern(store.CfgNow().EpisodePattern, map[string]string{
 			"show":    q.Show.Name,
 			"season":  fmt.Sprintf("%02d", q.Season),
 			"episode": fmt.Sprintf("%02d", v.Episode),
@@ -299,7 +290,7 @@ func DownloadPath(root string, t streamTarget, url string) string {
 	if len(segs) == 0 {
 		segs = []string{"untitled"}
 	}
-	if !cfgNow().DownloadFolders {
+	if !store.CfgNow().DownloadFolders {
 		segs = segs[len(segs)-1:]
 	}
 	segs[len(segs)-1] += ext

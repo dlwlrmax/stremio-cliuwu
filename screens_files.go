@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"sort"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 
@@ -274,7 +275,7 @@ func (s *fileListScreen) request(idx int) PlayRequest {
 		MediaType: "other",
 		Label:     file,
 		URL:       v.URL(),
-		Entry: HistoryEntry{
+		Entry: store.HistoryEntry{
 			Name: name, ID: s.meta.ID, Type: "other",
 			Source: s.meta.Source, Year: s.meta.Year, Base: s.meta.Base,
 			Episode: idx + 1, EpTitle: file,

@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"stremio-cliuwu/internal/jsonio"
@@ -15,10 +15,10 @@ import (
 // plugins second, whichever way it was first picked. Movies never get an
 // entry; they always use the global path.
 
-// subOff is the Lang of a preference meaning "this show plays without
+// SubOff is the Lang of a preference meaning "this show plays without
 // subtitles". It is recorded when subtitles are switched off mid-episode, and
 // replaced by any hand pick from the subtitle list.
-const subOff = "off"
+const SubOff = "off"
 
 // ShowSubPref is one show's remembered choice.
 type ShowSubPref struct {

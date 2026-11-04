@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -411,7 +412,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 	nq := *q
 	nq.Index = i
 	v := nq.Episodes[i]
-	pos, _, _ := GetPositionByEpisode(nq.Show.ID, nq.Season, v.Episode)
+	pos, _, _ := store.GetPositionByEpisode(nq.Show.ID, nq.Season, v.Episode)
 
 	s.target = streamTarget{
 		Meta:      nq.Show,
@@ -434,7 +435,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 func (s *streamScreen) request(st stremio.Stream, resume float64) PlayRequest {
 	t := s.target
 
-	entry := HistoryEntry{
+	entry := store.HistoryEntry{
 		Name:    t.Meta.Name,
 		ID:      t.Meta.ID,
 		Type:    t.Meta.Type,
@@ -459,7 +460,7 @@ func (s *streamScreen) request(st stremio.Stream, resume float64) PlayRequest {
 	}
 
 	if t.MediaType == "series" {
-		SetBinge(t.Meta.ID, st.BehaviorHints.BingeGroup)
+		store.SetBinge(t.Meta.ID, st.BehaviorHints.BingeGroup)
 	}
 
 	return PlayRequest{
@@ -548,7 +549,7 @@ func (s *streamScreen) download(st stremio.Stream) tea.Cmd {
 func (s *streamScreen) toggleWatched() tea.Cmd {
 	t := s.target
 
-	e := HistoryEntry{
+	e := store.HistoryEntry{
 		Name: t.Meta.Name, ID: t.Meta.ID, Type: t.Meta.Type,
 		Source: t.Meta.Source, Year: t.Meta.Year, VideoID: t.VideoID,
 	}
@@ -557,7 +558,7 @@ func (s *streamScreen) toggleWatched() tea.Cmd {
 		e.Season, e.Episode, e.EpTitle = t.Queue.Season, v.Episode, v.Title
 	}
 
-	if ToggleWatchedByEpisode(e) {
+	if store.ToggleWatchedByEpisode(e) {
 		return toast("marked " + t.Label + " watched")
 	}
 	return toast("marked " + t.Label + " unwatched")
@@ -589,7 +590,7 @@ func nextEpisodeTarget(prev PlayRequest) (streamTarget, bool) {
 	}
 
 	// Same as hop(): an episode you'd half watched offers to resume.
-	pos, _, _ := GetPositionByEpisode(q.Show.ID, v.Season, v.Episode)
+	pos, _, _ := store.GetPositionByEpisode(q.Show.ID, v.Season, v.Episode)
 
 	return streamTarget{
 		Meta:      q.Show,
@@ -619,7 +620,7 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		binge := ""
 		if s.target.MediaType == "series" {
-			binge = GetBinge(s.target.Meta.ID)
+			binge = store.GetBinge(s.target.Meta.ID)
 		}
 		s.streams = SortStreams(playable, ctx.cfg.PreferredQuality, binge, ctx.cfg.CachedFirst)
 		s.infos = make([]streamInfo, len(s.streams))
@@ -694,11 +695,11 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		case "i":
 			ctx.cfg.HideStreamDetails = !ctx.cfg.HideStreamDetails
-			SaveConfig(ctx.cfg)
+			store.SaveConfig(ctx.cfg)
 			s.layout()
 		case "a":
 			ctx.cfg.StreamAudio = !ctx.cfg.StreamAudio
-			SaveConfig(ctx.cfg)
+			store.SaveConfig(ctx.cfg)
 			s.rebuild()
 		case "s":
 			switch ctx.cfg.StreamSort {
@@ -709,7 +710,7 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			default:
 				ctx.cfg.StreamSort = ""
 			}
-			SaveConfig(ctx.cfg)
+			store.SaveConfig(ctx.cfg)
 			s.rebuild()
 			s.list.Focus(0)
 			return s, toast("sorted by " + streamSortName(ctx.cfg.StreamSort))

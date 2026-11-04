@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -120,7 +121,7 @@ func (s *subsScreen) collectLangs() {
 	s.langIx = 0
 	want := ""
 	if s.showID != "" {
-		if p, ok := GetSubPref(s.showID); ok && p.Lang != subOff {
+		if p, ok := store.GetSubPref(s.showID); ok && p.Lang != store.SubOff {
 			want = p.Lang
 		}
 	}
@@ -241,7 +242,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if s.pending.Addon == "stream" {
 				src = "embedded"
 			}
-			SetSubPref(s.showID, langs.Name(s.pending.Lang), src)
+			store.SetSubPref(s.showID, langs.Name(s.pending.Lang), src)
 			s.pending = nil
 
 			// A hand pick is the end of the errand: close the list and get
@@ -305,7 +306,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			// Back to the global default for this show. Only meaningful when
 			// a per-show preference could exist in the first place.
 			if s.showID != "" {
-				DeleteSubPref(s.showID)
+				store.DeleteSubPref(s.showID)
 				s.pending = nil
 				return s, toast("subtitle preference cleared — using global")
 			}

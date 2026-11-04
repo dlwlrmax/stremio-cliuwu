@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
@@ -17,7 +18,7 @@ import (
 // appCtx is the small pile of state every screen needs. A package-level
 // pointer beats threading five fields through every constructor.
 type appCtx struct {
-	cfg        AppConfig
+	cfg        store.AppConfig
 	refs       stremio.AddonList
 	addons     []stremio.Addon
 	player     *Player
@@ -292,10 +293,10 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
-	case historySyncedMsg:
+	case store.HistorySyncedMsg:
 		// A background pull rewrote history underneath every cached row, so
 		// rebuild the stack and refetch the top screen's info panel.
-		invalidateInProgress()
+		store.InvalidateInProgress()
 		for _, sc := range a.stack {
 			if r, ok := sc.(rebuildable); ok {
 				r.rebuild()
