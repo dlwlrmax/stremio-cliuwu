@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
 	"strings"
 	"sync"
 	"time"
@@ -133,7 +135,7 @@ func readPartInfo(final string) (partInfo, bool) {
 // .part invisible on disk with nothing to clean it up.
 func writePartInfo(final string, pi partInfo) {
 	if b, err := json.Marshal(pi); err == nil {
-		writeAtomic(infoPath(final), b, 0644)
+		jsonio.WriteAtomic(infoPath(final), b, 0644)
 	}
 }
 
@@ -331,7 +333,7 @@ type downloadIndex struct {
 
 // Load restores the queue from the index, checking each entry against disk.
 func (d *Downloader) Load() {
-	b, err := os.ReadFile(downloadsFile())
+	b, err := os.ReadFile(paths.DownloadsFile())
 	if err != nil {
 		return
 	}
@@ -396,7 +398,7 @@ func (d *Downloader) save() {
 	d.mu.Unlock()
 
 	if b, err := json.Marshal(idx); err == nil {
-		writeAtomic(downloadsFile(), b, 0644)
+		jsonio.WriteAtomic(paths.DownloadsFile(), b, 0644)
 	}
 }
 

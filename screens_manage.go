@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/paths"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -676,8 +677,8 @@ func (s *settingsScreen) rebuild() {
 		{head: ""},
 		{head: "downloads"},
 		{label: "download location", sub: "where D on a stream saves to", badge: orDash(c.DownloadDir), act: func() tea.Cmd {
-			return s.prompt("download location", defaultDownloadDir(), ctx.cfg.DownloadDir, func(v string) tea.Cmd {
-				ctx.cfg.DownloadDir = expandPath(v)
+			return s.prompt("download location", paths.DefaultDownloadDir(), ctx.cfg.DownloadDir, func(v string) tea.Cmd {
+				ctx.cfg.DownloadDir = paths.Expand(v)
 				return s.save()
 			}, "~ and environment variables are expanded", "folders are created as needed")
 		}},
@@ -830,7 +831,7 @@ func (s *settingsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 func (s *settingsScreen) View() string {
 	// Version alongside the config path: the two things you'd want to quote
 	// when something's wrong, and the one place you'd think to look for them.
-	left := "  " + stSub.Render(cfgFile())
+	left := "  " + stSub.Render(paths.CfgFile())
 	right := stHint.Render(appName+" ") + stKey.Render(version)
 
 	head := left

@@ -1,4 +1,5 @@
-package main
+// Package bitfield reads and writes Stremio's per-episode watched bitfield.
+package bitfield
 
 import (
 	"bytes"
@@ -6,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -35,10 +35,10 @@ import (
 //	Decode "tt2934286:1:5:eJyTZwAAAEAAIA==" -> anchor tt2934286:1:5, bits 0..4
 //	Empty watched state            -> "undefined:1:eJwDAAAAAAE="
 
-// EncodeWatchedBitfield renders the watched members of videos as Stremio's
+// Encode renders the watched members of videos as Stremio's
 // bitfield string. videos must already be in episode order (season, then
 // episode); watched is keyed by video id.
-func EncodeWatchedBitfield(videos []string, watched map[string]bool) string {
+func Encode(videos []string, watched map[string]bool) string {
 	last := -1
 	for i, v := range videos {
 		if watched[v] {
@@ -65,10 +65,10 @@ func EncodeWatchedBitfield(videos []string, watched map[string]bool) string {
 		base64.StdEncoding.EncodeToString(zlibDeflate(buf))
 }
 
-// DecodeWatchedBitfield parses the bitfield string, returning the anchor video
+// Decode parses the bitfield string, returning the anchor video
 // id, the encoded bit length, and the set bit indices (map[i] may be used
 // directly as a set). Bits past the decompressed buffer are ignored.
-func DecodeWatchedBitfield(s string) (anchorID string, length int, bits map[int]bool, err error) {
+func Decode(s string) (anchorID string, length int, bits map[int]bool, err error) {
 	i := strings.LastIndexByte(s, ':')
 	if i <= 0 {
 		return "", 0, nil, errors.New("bitfield: missing payload")
@@ -111,7 +111,7 @@ func DecodeWatchedBitfield(s string) (anchorID string, length int, bits map[int]
 	return anchorID, length, bits, nil
 }
 
-// AlignedWatched returns the indices of the n videos that a decoded bitfield
+// Aligned returns the indices of the n videos that a decoded bitfield
 // marks watched, aligned the way stremio-core does it.
 //
 // The stored bits are not addressed by absolute position. The anchor sits at
@@ -121,7 +121,7 @@ func DecodeWatchedBitfield(s string) (anchorID string, length int, bits map[int]
 // lost videos at the front still line up. Reading bit i as video i is only
 // right when offset is 0, i.e. when the local list matches Stremio's from the
 // start up to the anchor.
-func AlignedWatched(anchorLen, anchorIdx, n int, bits map[int]bool) []int {
+func Aligned(anchorLen, anchorIdx, n int, bits map[int]bool) []int {
 	if anchorIdx < 0 || anchorIdx >= n {
 		return nil
 	}
@@ -141,59 +141,4 @@ func zlibDeflate(b []byte) []byte {
 	_, _ = w.Write(b)
 	_ = w.Close()
 	return out.Bytes()
-}
-
-// ── Index space ───────────────────────────────────────────────────────────────
-
-// orderedEpisodes is the episode order a bitfield index maps onto: the show's
-// videos sorted by season, then episode. The cached meta supplies the full
-// list when the title has been browsed; otherwise only the episodes the store
-// has already recorded can be addressed, because an episode never touched
-// locally has no index to send or receive. Callers hold hist.mu.
-func orderedEpisodes(showID string, sh *showState) [][2]int {
-	if eps := epsFromMeta(showID); len(eps) > 0 {
-		return eps
-	}
-	return epsFromStore(sh)
-}
-
-func epsFromMeta(showID string) [][2]int {
-	sm, ok := cacheSeries.Get(showID)
-	if !ok {
-		return nil
-	}
-	out := make([][2]int, 0, len(sm.Videos))
-	for _, v := range sm.Videos {
-		if v.Episode <= 0 {
-			continue
-		}
-		out = append(out, [2]int{v.Season, v.Episode})
-	}
-	sortSeEp(out)
-	return out
-}
-
-func epsFromStore(sh *showState) [][2]int {
-	if sh == nil {
-		return nil
-	}
-	out := make([][2]int, 0, len(sh.Eps))
-	for k := range sh.Eps {
-		s, e := parseEpKey(k)
-		if e <= 0 {
-			continue
-		}
-		out = append(out, [2]int{s, e})
-	}
-	sortSeEp(out)
-	return out
-}
-
-func sortSeEp(eps [][2]int) {
-	sort.Slice(eps, func(i, j int) bool {
-		if eps[i][0] != eps[j][0] {
-			return eps[i][0] < eps[j][0]
-		}
-		return eps[i][1] < eps[j][1]
-	})
 }

@@ -1,6 +1,10 @@
 package main
 
-import "sync"
+import (
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
+	"sync"
+)
 
 // Per-show binge group: the release you last played for a series, so the
 // next episode's stream list can lead with the same one. Same shape as the
@@ -15,7 +19,7 @@ var bingePrefs = struct {
 // it costs one episode's worth of picking by hand.
 func LoadBingePrefs() {
 	m := map[string]string{}
-	if err := readJSON(bingeFile(), &m); err != nil || m == nil {
+	if err := jsonio.Read(paths.BingeFile(), &m); err != nil || m == nil {
 		m = map[string]string{}
 	}
 	bingePrefs.Lock()
@@ -47,5 +51,5 @@ func SetBinge(showID, group string) {
 	}
 	bingePrefs.Unlock()
 
-	writeJSON(bingeFile(), snapshot)
+	jsonio.Write(paths.BingeFile(), snapshot)
 }

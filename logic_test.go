@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"stremio-cliuwu/internal/paths"
 	"testing"
 	"time"
 )
@@ -212,10 +213,10 @@ func TestEmbeddedPrefKeepsTrackAndSkipsNoChange(t *testing.T) {
 	}
 
 	// Saving the same thing again must not touch the file.
-	fi1, _ := os.Stat(subsPrefsFile())
+	fi1, _ := os.Stat(paths.SubsPrefsFile())
 	time.Sleep(20 * time.Millisecond)
 	SetEmbeddedPref("show", "English", "Signs & Songs")
-	fi2, _ := os.Stat(subsPrefsFile())
+	fi2, _ := os.Stat(paths.SubsPrefsFile())
 	if !fi2.ModTime().Equal(fi1.ModTime()) {
 		t.Error("identical preference was rewritten")
 	}

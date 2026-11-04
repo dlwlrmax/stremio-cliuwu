@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"stremio-cliuwu/internal/bitfield"
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -40,7 +43,7 @@ type stremioEnvelope struct {
 }
 
 // libraryItem is the subset of Stremio's LibraryItem we handle. The per-episode
-// watched bitfield is decoded via DecodeWatchedBitfield; behaviorHints is still
+// watched bitfield is decoded via bitfield.Decode; behaviorHints is still
 // ignored.
 type libraryItem struct {
 	ID      string        `json:"_id"`
@@ -75,17 +78,17 @@ type accountInfo struct {
 
 func LoadAccount() accountInfo {
 	var a accountInfo
-	if err := readJSON(accountFile(), &a); err != nil {
+	if err := jsonio.Read(paths.AccountFile(), &a); err != nil {
 		return accountInfo{}
 	}
 	return a
 }
 
-// SaveAccount writes 0600 via writeJSON, the same treatment addons.json gets
+// SaveAccount writes 0600 via jsonio.Write, the same treatment addons.json gets
 // because it also carries a token.
-func SaveAccount(a accountInfo) error { return writeJSON(accountFile(), a) }
+func SaveAccount(a accountInfo) error { return jsonio.Write(paths.AccountFile(), a) }
 
-func ClearAccount() { _ = os.Remove(accountFile()) }
+func ClearAccount() { _ = os.Remove(paths.AccountFile()) }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────
 
@@ -391,7 +394,7 @@ func MergeLibrary(items []libraryItem) int {
 // watched episode — is marked directly, so it lands even when it isn't in the
 // local ordering yet. Callers hold the lock.
 func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mtime int64) {
-	anchorID, length, bits, err := DecodeWatchedBitfield(bf)
+	anchorID, length, bits, err := bitfield.Decode(bf)
 	if err != nil {
 		return
 	}
@@ -415,12 +418,12 @@ func (h *historyStore) applyWatchedBitfield(sh *showState, showID, bf string, mt
 		}
 	}
 
-	// Bits are placed relative to the anchor (see AlignedWatched). With the
+	// Bits are placed relative to the anchor (see bitfield.Aligned). With the
 	// anchor missing from our list there is nothing to align to, and
 	// stremio-core treats that as a blank field too; only the anchor itself,
 	// marked below, is trusted.
 	if ai := anchorIndex(showID, anchorID, eps); ai >= 0 {
-		for _, i := range AlignedWatched(length, ai, len(eps), bits) {
+		for _, i := range bitfield.Aligned(length, ai, len(eps), bits) {
 			mark(eps[i][0], eps[i][1])
 		}
 	}

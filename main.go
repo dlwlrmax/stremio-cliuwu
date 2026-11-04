@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"stremio-cliuwu/internal/paths"
 	"strings"
 	"sync"
 	"syscall"
@@ -11,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const appName = "stremio-cliuwu"
+const appName = paths.AppName
 
 // version is overwritten at build time via
 // -ldflags="-X main.version=…". "dev" is what an untagged local build
@@ -39,7 +40,7 @@ func parseArgs(args []string) (launchOpts, bool) {
 			fmt.Printf("%s %s\n", appName, version)
 			return o, false
 		case "--config":
-			fmt.Println(configDir())
+			fmt.Println(paths.ConfigDir())
 			return o, false
 		case "--help", "-h":
 			usage()
@@ -108,7 +109,7 @@ func main() {
 	LoadBingePrefs()
 	firstRun := false
 	if len(refs.Items) == 0 {
-		if _, err := os.Stat(addonsFile()); os.IsNotExist(err) {
+		if _, err := os.Stat(paths.AddonsFile()); os.IsNotExist(err) {
 			refs = SeedAddons()
 			firstRun = true
 		}
@@ -231,5 +232,5 @@ func usage() {
     addons.json     your addon manifest urls (mode 0600)
     favourites.json
     history.json
-`, appName, version, appName, appName, appName, appName, appName, appName, configDir())
+`, appName, version, appName, appName, appName, appName, appName, appName, paths.ConfigDir())
 }

@@ -5,12 +5,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
 	"sync/atomic"
 )
 
 func LoadConfig() AppConfig {
 	var c AppConfig
-	readJSON(cfgFile(), &c) // missing or corrupt file → zero value, defaults below
+	jsonio.Read(paths.CfgFile(), &c) // missing or corrupt file → zero value, defaults below
 
 	if c.SetDefaults() {
 		SaveConfig(c) // write the upgrade back so it only happens once
@@ -41,7 +43,7 @@ func cfgNow() AppConfig {
 
 func SaveConfig(c AppConfig) error {
 	publishCfg(c)
-	return writeJSON(cfgFile(), c)
+	return jsonio.Write(paths.CfgFile(), c)
 }
 
 // detectMpv looks for an mpv binary in the usual places.

@@ -6,6 +6,9 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"stremio-cliuwu/internal/bitfield"
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
 	"strings"
 	"sync"
 	"time"
@@ -153,7 +156,7 @@ func (h *historyStore) load() {
 	h.data = historyFile{Version: historyVer, Shows: map[string]*showState{}}
 	h.byVideo = map[string]epRef{}
 
-	b, err := os.ReadFile(histFile())
+	b, err := os.ReadFile(paths.HistFile())
 	if err != nil {
 		return
 	}
@@ -165,7 +168,7 @@ func (h *historyStore) load() {
 	if json.Unmarshal(b, &f) != nil || f.Version < 2 || f.Shows == nil {
 		// Starting empty is fine; overwriting the file on the next flush is
 		// not. Keep what was there.
-		quarantine(histFile())
+		jsonio.Quarantine(paths.HistFile())
 		return
 	}
 	if f.Version < historyVer {
@@ -273,7 +276,7 @@ func (h *historyStore) Flush() {
 	h.mu.Unlock()
 
 	if err == nil {
-		err = writeAtomic(histFile(), b, 0600)
+		err = jsonio.WriteAtomic(paths.HistFile(), b, 0600)
 	}
 	if err != nil {
 		// Still unsaved: mark it so the next change or exit tries again.
@@ -685,7 +688,7 @@ func watchedBitfield(showID string, sh *showState) string {
 			}
 		}
 		if last < 0 {
-			return EncodeWatchedBitfield(nil, nil)
+			return bitfield.Encode(nil, nil)
 		}
 		eps = eps[last : last+1]
 	}
@@ -699,7 +702,7 @@ func watchedBitfield(showID string, sh *showState) string {
 			watched[v] = true
 		}
 	}
-	return EncodeWatchedBitfield(videos, watched)
+	return bitfield.Encode(videos, watched)
 }
 
 // epMTime is an episode's real last-write clock, falling back to the old T for

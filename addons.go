@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
 	"strings"
 	"sync"
 	"time"
@@ -29,13 +31,13 @@ const defaultOpenSubtitles = "https://opensubtitles-v3.strem.io/manifest.json"
 
 func LoadAddonRefs() AddonList {
 	var al AddonList
-	if err := readJSON(addonsFile(), &al); err != nil {
+	if err := jsonio.Read(paths.AddonsFile(), &al); err != nil {
 		return AddonList{}
 	}
 	return al
 }
 
-func SaveAddonRefs(al AddonList) error { return writeJSON(addonsFile(), al) }
+func SaveAddonRefs(al AddonList) error { return jsonio.Write(paths.AddonsFile(), al) }
 
 // SeedAddons writes the two metadata addons every install needs. Called once
 // when addons.json doesn't exist yet.

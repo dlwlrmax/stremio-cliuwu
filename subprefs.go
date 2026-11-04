@@ -1,6 +1,10 @@
 package main
 
-import "sync"
+import (
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
+	"sync"
+)
 
 // Per-show subtitle preferences.
 //
@@ -46,7 +50,7 @@ var subPrefsWrite sync.Mutex
 // an empty map, never an error: a bad preference shouldn't stop playback.
 func LoadSubPrefs() {
 	m := map[string]ShowSubPref{}
-	if err := readJSON(subsPrefsFile(), &m); err != nil || m == nil {
+	if err := jsonio.Read(paths.SubsPrefsFile(), &m); err != nil || m == nil {
 		m = map[string]ShowSubPref{}
 	}
 	subPrefs.Lock()
@@ -93,7 +97,7 @@ func setSubPref(showID string, pref ShowSubPref) {
 	snapshot := cloneSubPrefs(subPrefs.m)
 	subPrefs.Unlock()
 
-	writeJSON(subsPrefsFile(), snapshot)
+	jsonio.Write(paths.SubsPrefsFile(), snapshot)
 }
 
 // DeleteSubPref forgets a show, sending it back to the global default.
@@ -113,7 +117,7 @@ func DeleteSubPref(showID string) {
 	snapshot := cloneSubPrefs(subPrefs.m)
 	subPrefs.Unlock()
 
-	writeJSON(subsPrefsFile(), snapshot)
+	jsonio.Write(paths.SubsPrefsFile(), snapshot)
 }
 
 // cloneSubPrefs copies the map so the file can be written without holding the

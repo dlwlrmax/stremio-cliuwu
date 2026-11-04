@@ -1,17 +1,21 @@
 package main
 
-import "time"
+import (
+	"stremio-cliuwu/internal/jsonio"
+	"stremio-cliuwu/internal/paths"
+	"time"
+)
 
 func LoadFavs() FavouriteList {
 	var fl FavouriteList
-	if err := readJSON(favsFile(), &fl); err != nil {
+	if err := jsonio.Read(paths.FavsFile(), &fl); err != nil {
 		return FavouriteList{}
 	}
 	return fl
 }
 
 func saveFavs(fl FavouriteList) {
-	_ = writeJSON(favsFile(), fl)
+	_ = jsonio.Write(paths.FavsFile(), fl)
 }
 
 // ToggleFav adds a favourite, or removes it if it is already there.

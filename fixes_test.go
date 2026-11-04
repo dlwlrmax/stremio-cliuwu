@@ -2,8 +2,6 @@ package main
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -68,23 +66,6 @@ func TestIsWatchedAtNotStarted(t *testing.T) {
 	}
 	if !IsWatchedAt(100, 100) {
 		t.Error("end of file should count")
-	}
-}
-
-func TestReadJSONQuarantinesCorruptFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "x.json")
-	os.WriteFile(p, []byte("{not json"), 0600)
-	var v map[string]any
-	if readJSON(p, &v) == nil {
-		t.Fatal("expected a parse error")
-	}
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Error("corrupt file should have been moved aside")
-	}
-	m, _ := filepath.Glob(p + ".corrupt-*")
-	if len(m) != 1 {
-		t.Errorf("want one quarantined copy, got %v", m)
 	}
 }
 
