@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -144,9 +145,9 @@ func (s *streamScreen) Title() string {
 	// The queue has the episode's real numbers; the id may not.
 	if q := s.target.Queue; q != nil && q.Index < len(q.Episodes) {
 		v := q.Episodes[q.Index]
-		return fmtEp(v.Season, v.Episode, s.target.VideoID)
+		return format.Ep(v.Season, v.Episode, s.target.VideoID)
 	}
-	return fmtVideoID(s.target.VideoID)
+	return format.VideoID(s.target.VideoID)
 }
 
 func (s *streamScreen) Typing() bool { return s.list.Typing() }
@@ -417,7 +418,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 		MediaType: "series",
 		VideoID:   v.ID,
 		StreamID:  v.StreamID(),
-		Label:     nq.Show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
+		Label:     nq.Show.Name + " · " + format.Ep(v.Season, v.Episode, v.ID),
 		Resume:    pos,
 		Queue:     &nq,
 	}
@@ -515,10 +516,10 @@ func (s *streamScreen) play(st stremio.Stream) tea.Cmd {
 
 	return push(newChoice(
 		"resume",
-		"resume "+s.target.Label+" from "+fmtSecs(resume)+"?",
+		"resume "+s.target.Label+" from "+format.Secs(resume)+"?",
 		"resume", "start over",
 		func() tea.Cmd {
-			return tea.Batch(s.launch(st, resume), toast("resuming at "+fmtSecs(resume)))
+			return tea.Batch(s.launch(st, resume), toast("resuming at "+format.Secs(resume)))
 		},
 		func() tea.Cmd {
 			return tea.Batch(s.launch(st, 0), toast("starting over"))
@@ -595,7 +596,7 @@ func nextEpisodeTarget(prev PlayRequest) (streamTarget, bool) {
 		MediaType: "series",
 		VideoID:   v.ID,
 		StreamID:  v.StreamID(),
-		Label:     q.Show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
+		Label:     q.Show.Name + " · " + format.Ep(v.Season, v.Episode, v.ID),
 		Resume:    pos,
 		Queue:     &q,
 	}, true
@@ -751,7 +752,7 @@ func (s *streamScreen) View() string {
 		sub += fmt.Sprintf("  ·  %d/%d", q.Index+1, len(q.Episodes))
 	}
 	if s.target.Resume > 5 && ctx.cfg.AutoResume {
-		sub += "  ·  " + yell("watched to "+fmtSecs(s.target.Resume))
+		sub += "  ·  " + yell("watched to "+format.Secs(s.target.Resume))
 	}
 	out := "  " + stSub.Render(sub) + "\n"
 	if bar := s.providerBar(); bar != "" {

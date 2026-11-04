@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 
@@ -389,7 +390,7 @@ func (p *infoPane) render() string {
 		facts = append(facts, string(d.Runtime))
 	}
 	if d.ImdbRating != "" && d.ImdbRating != "N/A" {
-		facts = append(facts, "★ "+fmtRating(string(d.ImdbRating)))
+		facts = append(facts, "★ "+format.Rating(string(d.ImdbRating)))
 	}
 	if len(facts) > 0 {
 		head = append(head, stKey.Render(strings.Join(facts, "  ·  ")))
@@ -443,7 +444,7 @@ func (p *infoPane) renderEpisode() string {
 		out = append(out, "")
 	}
 
-	for _, ln := range lines(wrap.Render(fmtEp(v.Season, v.Episode, v.ID))) {
+	for _, ln := range lines(wrap.Render(format.Ep(v.Season, v.Episode, v.ID))) {
 		out = append(out, stKey.Render(ln))
 	}
 	if v.Title != "" {
@@ -456,11 +457,11 @@ func (p *infoPane) renderEpisode() string {
 	}
 
 	if r := fmtRelease(v.Released); r != "" {
-		if videoAired(v) {
+		if format.VideoAired(v) {
 			out = append(out, stSub.Render("aired "+r))
 		} else {
 			line := "○ airs " + r
-			if when := untilRelease(v.Released); when != "" {
+			if when := format.UntilRelease(v.Released); when != "" {
 				line += "  ·  " + when
 			}
 			out = append(out, stWarn.Render(line))

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
 	"strings"
@@ -1003,5 +1004,5 @@ func fmtETA(d Download) string {
 		return ""
 	}
 	secs := float64(d.Total-d.Done) / float64(d.Speed)
-	return fmtSecs(secs) + " left"
+	return format.Secs(secs) + " left"
 }

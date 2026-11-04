@@ -35,7 +35,7 @@ var HttpClient = &http.Client{
 
 func GetJSON(u string, out any) error { return GetJSONTimeout(u, out, 0) }
 
-// getJSONTimeout is getJSON with a deadline of its own.
+// GetJSONTimeout is getJSON with a deadline of its own.
 //
 // A manifest is a few hundred bytes and either answers quickly or isn't
 // coming. Letting it use the full fifteen second client timeout meant one

@@ -1,4 +1,4 @@
-package main
+package format
 
 import (
 	"fmt"
@@ -10,9 +10,9 @@ import (
 	"unicode/utf8"
 )
 
-// fmtRating normalises a rating for display. Addons disagree on precision:
+// Rating normalises a rating for display. Addons disagree on precision:
 // cinemeta sends one decimal, others pass a tmdb score through with three.
-func fmtRating(s string) string {
+func Rating(s string) string {
 	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil {
 		return s
@@ -20,7 +20,7 @@ func fmtRating(s string) string {
 	return strconv.FormatFloat(f, 'f', 1, 64)
 }
 
-func fmtSecs(s float64) string {
+func Secs(s float64) string {
 	if s < 0 {
 		s = 0
 	}
@@ -32,8 +32,8 @@ func fmtSecs(s float64) string {
 	return fmt.Sprintf("%02d:%02d", m, sec)
 }
 
-// parseRelease reads the assorted date formats the metadata addons emit.
-func parseRelease(s string) (time.Time, bool) {
+// ParseRelease reads the assorted date formats the metadata addons emit.
+func ParseRelease(s string) (time.Time, bool) {
 	if s == "" || s == "N/A" {
 		return time.Time{}, false
 	}
@@ -63,9 +63,9 @@ func parseRelease(s string) (time.Time, bool) {
 // looking at can't be inferred from the output — it has to be a setting.
 var dateFormats = []string{"dmy", "mdy", "ymd", "long"}
 
-// dateFormatName is what settings shows, since "dmy" tells you the field
+// DateFormatName is what settings shows, since "dmy" tells you the field
 // order but not which convention it belongs to.
-func dateFormatName(kind string) string {
+func DateFormatName(kind string) string {
 	switch kind {
 	case "mdy":
 		return "US"
@@ -77,7 +77,7 @@ func dateFormatName(kind string) string {
 	return "European"
 }
 
-func dateLayout(kind string) string {
+func DateLayout(kind string) string {
 	switch kind {
 	case "mdy":
 		return "Mon 01/02/06"
@@ -89,7 +89,7 @@ func dateLayout(kind string) string {
 	return "Mon 02/01/06"
 }
 
-func nextDateFormat(cur string) string {
+func NextDateFormat(cur string) string {
 	for i, f := range dateFormats {
 		if f == cur {
 			return dateFormats[(i+1)%len(dateFormats)]
@@ -98,25 +98,8 @@ func nextDateFormat(cur string) string {
 	return "dmy"
 }
 
-// dateSample renders today in a layout, for the settings preview.
-func dateSample(kind string) string { return time.Now().Format(dateLayout(kind)) }
-
-func fmtRelease(s string) string {
-	t, ok := parseRelease(s)
-	if !ok {
-		return ""
-	}
-
-	kind := "dmy"
-	if ctx != nil {
-		kind = ctx.cfg.DateFormat
-	}
-
-	// As published, matching daysUntil — the date a database gives for an
-	// episode is the broadcast day, and reinterpreting it in another zone
-	// would print a different day than the countdown beside it counts to.
-	return t.Format(dateLayout(kind))
-}
+// DateSample renders today in a layout, for the settings preview.
+func DateSample(kind string) string { return time.Now().Format(DateLayout(kind)) }
 
 // daysUntil is how many whole days away a release date is, or -1 if it's
 // already passed or unparseable.
@@ -130,7 +113,7 @@ func fmtRelease(s string) string {
 // Local time on both sides: release timestamps are UTC, and the day an
 // episode lands on is the day it lands on where you are.
 func daysUntil(released string) int {
-	t, ok := parseRelease(released)
+	t, ok := ParseRelease(released)
 	if !ok {
 		return -1
 	}
@@ -176,15 +159,15 @@ func untilParts(days int) (n1 int, u1 string, n2 int, u2 string) {
 	return days / 365, "year", (days % 365) / 30, "month"
 }
 
-func plural(n int, unit string) string {
+func Plural(n int, unit string) string {
 	if n == 1 {
 		return fmt.Sprintf("%d %s", n, unit)
 	}
 	return fmt.Sprintf("%d %ss", n, unit)
 }
 
-// untilRelease is the long form, for the info panel.
-func untilRelease(released string) string {
+// UntilRelease is the long form, for the info panel.
+func UntilRelease(released string) string {
 	days := daysUntil(released)
 	switch {
 	case days < 0:
@@ -196,28 +179,28 @@ func untilRelease(released string) string {
 	}
 
 	n1, u1, n2, u2 := untilParts(days)
-	out := "in " + plural(n1, u1)
+	out := "in " + Plural(n1, u1)
 	if n2 > 0 {
-		out += ", " + plural(n2, u2)
+		out += ", " + Plural(n2, u2)
 	}
 	return out
 }
 
-// videoAired reports whether an episode's release date has passed. An
+// VideoAired reports whether an episode's release date has passed. An
 // unparseable or missing date counts as aired — plenty of catalogs leave it
 // blank, and refusing to play those would be worse than the occasional
 // unaired entry slipping through.
-func videoAired(v stremio.Video) bool {
-	t, ok := parseRelease(v.Released)
+func VideoAired(v stremio.Video) bool {
+	t, ok := ParseRelease(v.Released)
 	if !ok {
 		return true
 	}
 	return !t.After(time.Now())
 }
 
-// specialGroup is one collection inside the specials season — an OVA, a
+// SpecialGroup is one collection inside the specials season — an OVA, a
 // recap, a set of shorts. Each is its own title in kitsu.
-type specialGroup struct {
+type SpecialGroup struct {
 	KitsuID string
 	Title   string
 
@@ -226,14 +209,14 @@ type specialGroup struct {
 	Count int
 }
 
-// groupSpecials splits season 0 by the kitsu entry each video came from,
+// GroupSpecials splits season 0 by the kitsu entry each video came from,
 // keeping the order they appear in.
 //
 // Season 0 of a merged anime is a dumping ground: forty-odd unrelated shorts
 // from half a dozen different releases. They arrive tagged with which release
 // they belong to, so the list can offer those instead.
-func groupSpecials(videos []stremio.Video) []specialGroup {
-	var out []specialGroup
+func GroupSpecials(videos []stremio.Video) []SpecialGroup {
+	var out []SpecialGroup
 	at := map[string]int{}
 	names := map[string][]string{}
 
@@ -243,7 +226,7 @@ func groupSpecials(videos []stremio.Video) []specialGroup {
 		}
 		if _, ok := at[v.KitsuID]; !ok {
 			at[v.KitsuID] = len(out)
-			out = append(out, specialGroup{KitsuID: v.KitsuID})
+			out = append(out, SpecialGroup{KitsuID: v.KitsuID})
 		}
 		names[v.KitsuID] = append(names[v.KitsuID], v.Title)
 	}
@@ -267,7 +250,7 @@ func groupTitle(names []string) string {
 
 	prefix := names[0]
 	for _, n := range names[1:] {
-		prefix = commonPrefix(prefix, n)
+		prefix = CommonPrefix(prefix, n)
 		if prefix == "" {
 			break
 		}
@@ -303,7 +286,7 @@ func groupTitle(names []string) string {
 	return prefix
 }
 
-func commonPrefix(a, b string) string {
+func CommonPrefix(a, b string) string {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
@@ -321,10 +304,10 @@ func commonPrefix(a, b string) string {
 
 // noSeason means "open the show, no particular season". Zero can't do that
 // job any more — it's the specials season, and a real destination.
-const noSeason = -1
+const NoSeason = -1
 
-// indexOfSeason finds a season's row, or the first row if it isn't there.
-func indexOfSeason(seasons []int, want int) int {
+// IndexOfSeason finds a season's row, or the first row if it isn't there.
+func IndexOfSeason(seasons []int, want int) int {
 	for i, s := range seasons {
 		if s == want {
 			return i
@@ -333,33 +316,33 @@ func indexOfSeason(seasons []int, want int) int {
 	return 0
 }
 
-// seasonLabel names a season row. Season 0 is where addons file specials,
+// SeasonLabel names a season row. Season 0 is where addons file specials,
 // OVAs and recaps.
-func seasonLabel(season int) string {
+func SeasonLabel(season int) string {
 	if season == 0 {
 		return "specials"
 	}
 	return fmt.Sprintf("season %d", season)
 }
 
-// fmtEp labels an episode from its stored numbers, falling back to parsing
+// Ep labels an episode from its stored numbers, falling back to parsing
 // the id.
 //
 // Parsing is the unreliable path: a kitsu id carries no season at all, so
-// fmtVideoID has to assume 1 — which is right for a first cour and wrong for
+// VideoID has to assume 1 — which is right for a first cour and wrong for
 // every one after it. Anywhere the season and episode are already known, use
 // them.
-func fmtEp(season, episode int, videoID string) string {
+func Ep(season, episode int, videoID string) string {
 	// season 0 is legitimate — it's where specials live — so the episode
 	// number is what decides whether this is an episode at all.
 	if episode > 0 && season >= 0 {
 		return fmt.Sprintf("S%02dE%02d", season, episode)
 	}
-	return fmtVideoID(videoID)
+	return VideoID(videoID)
 }
 
-// fmtVideoID turns "tt1234:2:5" or "kitsu:123:7" into "S02E05".
-func fmtVideoID(videoID string) string {
+// VideoID turns "tt1234:2:5" or "kitsu:123:7" into "S02E05".
+func VideoID(videoID string) string {
 	parts := strings.Split(videoID, ":")
 	if len(parts) >= 3 {
 		sStr, eStr := parts[len(parts)-2], parts[len(parts)-1]
@@ -376,8 +359,8 @@ func fmtVideoID(videoID string) string {
 	return videoID
 }
 
-// cleanTitle un-escapes and de-extensions an mpv media-title.
-func cleanTitle(s string) string {
+// CleanTitle un-escapes and de-extensions an mpv media-title.
+func CleanTitle(s string) string {
 	if s == "" {
 		return ""
 	}
@@ -396,8 +379,8 @@ func cleanTitle(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// knownKind reports whether a value is one of the buckets sourceTag renders.
-func knownKind(s string) bool {
+// KnownKind reports whether a value is one of the buckets sourceTag renders.
+func KnownKind(s string) bool {
 	switch s {
 	case "movie", "show", "anime", "other":
 		return true
@@ -405,67 +388,18 @@ func knownKind(s string) bool {
 	return false
 }
 
-// kindTag picks whichever of source or type is a bucket we can render.
-//
-// Source is the better answer when it's set to something meaningful, but it
-// isn't always — it can arrive empty, or carry a value from elsewhere in the
-// protocol like "series". Falling back to the item's own type beats printing
-// "[?]" about something we can perfectly well identify.
-func kindTag(source, typ string) string {
-	if knownKind(source) {
-		return sourceTag(source)
-	}
-	if knownKind(typ) {
-		return sourceTag(typ)
-	}
-	if typ == "series" {
-		return sourceTag("show")
-	}
-	return sourceTag(source)
-}
-
-func sourceTag(source string) string {
-	switch source {
-	case "movie":
-		return accent("[movie]")
-	case "show":
-		return hi("[show]")
-	case "anime":
-		return yell("[anime]")
-	case "other":
-		return grey("[library]")
-	}
-	return grey("[?]")
-}
-
-// progressGlyph renders a compact "12:34 / 45:00 (27%)" style readout.
-func progressGlyph(pos, dur float64) string {
+// ProgressGlyph renders a compact "12:34 / 45:00 (27%)" style readout.
+func ProgressGlyph(pos, dur float64) string {
 	if dur <= 0 {
-		return fmtSecs(pos)
+		return Secs(pos)
 	}
-	return fmt.Sprintf("%s / %s (%.0f%%)", fmtSecs(pos), fmtSecs(dur), pos/dur*100)
+	return fmt.Sprintf("%s / %s (%.0f%%)", Secs(pos), Secs(dur), pos/dur*100)
 }
 
-// progressBar draws a filled bar of the given width.
-func progressBar(frac float64, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if frac < 0 {
-		frac = 0
-	}
-	if frac > 1 {
-		frac = 1
-	}
-	fill := int(frac * float64(w))
-	return stBarFill.Render(strings.Repeat("━", fill)) +
-		stBarRest.Render(strings.Repeat("━", w-fill))
-}
-
-// naturalLess compares strings with embedded numbers the way a person would:
+// NaturalLess compares strings with embedded numbers the way a person would:
 // "S01E02" before "S01E10", "Season 2" before "Season 10". A plain string
 // compare puts E10 before E2, which is why a season pack comes out shuffled.
-func naturalLess(a, b string) bool {
+func NaturalLess(a, b string) bool {
 	la, lb := strings.ToLower(a), strings.ToLower(b)
 	i, j := 0, 0
 
@@ -540,9 +474,9 @@ func resumeFloor(dur float64) float64 {
 	return clampF(0.05*dur, 15, 3*60)
 }
 
-// prefetchLead is how long before the end to start resolving the next episode.
+// PrefetchLead is how long before the end to start resolving the next episode.
 // Enough time for a debrid addon to answer, without jumping the gun on a film.
-func prefetchLead(dur float64) float64 {
+func PrefetchLead(dur float64) float64 {
 	return clampF(0.15*dur, 90, 6*60)
 }
 

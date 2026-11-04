@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 
@@ -114,7 +115,7 @@ func (s *menuScreen) rebuild() {
 
 		what := e.Name
 		if e.Episode > 0 {
-			what += " · " + fmtEp(e.Season, e.Episode, e.VideoID)
+			what += " · " + format.Ep(e.Season, e.Episode, e.VideoID)
 		}
 		if e.EpTitle != "" {
 			what += " — " + e.EpTitle
@@ -135,7 +136,7 @@ func (s *menuScreen) rebuild() {
 			if c.Airing != "" {
 				label = "waiting"
 				detail = "airs " + fmtRelease(c.Airing)
-				if when := untilRelease(c.Airing); when != "" {
+				if when := format.UntilRelease(c.Airing); when != "" {
 					detail += " · " + when
 				}
 			}
@@ -145,7 +146,7 @@ func (s *menuScreen) rebuild() {
 				pos, dur = live.Pos, live.Duration
 			}
 			if dur > 0 && pos > 0 {
-				detail = progressGlyph(pos, dur)
+				detail = format.ProgressGlyph(pos, dur)
 			} else {
 				detail = "not started"
 			}

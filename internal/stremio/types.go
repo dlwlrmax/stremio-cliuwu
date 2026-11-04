@@ -230,7 +230,7 @@ func (a Addon) SupportsResource(name, mediaType, id string) bool {
 // FlexString is a string that tolerates a non-string scalar in JSON.
 //
 // Addons disagree on whether runtime and imdbRating are strings or numbers.
-// getJSON no longer fails the whole response over a mismatch, but that leaves
+// GetJSON no longer fails the whole response over a mismatch, but that leaves
 // the field empty; this keeps the value.
 type FlexString string
 

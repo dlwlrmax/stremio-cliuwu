@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ func today() string {
 	if ctx != nil {
 		kind = ctx.cfg.DateFormat
 	}
-	return time.Now().Format(dateLayout(kind))
+	return time.Now().Format(format.DateLayout(kind))
 }
 
 // The main menu is eleven fixed rows on a terminal that's usually far wider
@@ -291,7 +292,7 @@ func (p *continuePanel) View() string {
 
 		ep := ""
 		if e.Episode > 0 {
-			ep = fmtEp(e.Season, e.Episode, e.VideoID)
+			ep = format.Ep(e.Season, e.Episode, e.VideoID)
 		}
 
 		entry := e
@@ -309,7 +310,7 @@ func (p *continuePanel) View() string {
 			}
 			ep := ""
 			if e.Episode > 0 {
-				ep = fmtEp(e.Season, e.Episode, e.VideoID)
+				ep = format.Ep(e.Season, e.Episode, e.VideoID)
 			}
 			lines = append(lines, p.row("", grey(e.Name), ep, good("   ✓")))
 		}
@@ -383,7 +384,7 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 			facts = append(facts, string(d.Runtime))
 		}
 		if d.ImdbRating != "" && d.ImdbRating != "N/A" {
-			facts = append(facts, "★ "+fmtRating(string(d.ImdbRating)))
+			facts = append(facts, "★ "+format.Rating(string(d.ImdbRating)))
 		}
 		if len(facts) > 0 {
 			out = append(out, stKey.Render(strings.Join(facts, "  ·  ")))
@@ -405,7 +406,7 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 	}
 
 	if e.Episode > 0 {
-		out = append(out, stKey.Render(fmtEp(e.Season, e.Episode, e.VideoID)))
+		out = append(out, stKey.Render(format.Ep(e.Season, e.Episode, e.VideoID)))
 	}
 
 	title := e.EpTitle
@@ -422,11 +423,11 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 	// Only meaningful once the fetch for this target has landed.
 	if p.epKey == targetKey(e) {
 		if r := fmtRelease(p.epVideo.Released); r != "" {
-			if videoAired(p.epVideo) {
+			if format.VideoAired(p.epVideo) {
 				out = append(out, stSub.Render("aired "+r))
 			} else {
 				line := "○ airs " + r
-				if when := untilRelease(p.epVideo.Released); when != "" {
+				if when := format.UntilRelease(p.epVideo.Released); when != "" {
 					line += "  ·  " + when
 				}
 				out = append(out, stWarn.Render(line))

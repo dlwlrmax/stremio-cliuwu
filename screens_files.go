@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 
@@ -399,7 +400,7 @@ func (s *fileListScreen) rebuild() {
 		}
 
 		// Directories first, then files.
-		sort.SliceStable(dirs, func(a, b int) bool { return naturalLess(dirs[a], dirs[b]) })
+		sort.SliceStable(dirs, func(a, b int) bool { return format.NaturalLess(dirs[a], dirs[b]) })
 		dirRows := make([]fileRow, 0, len(dirs))
 		for _, d := range dirs {
 			dirRows = append(dirRows, fileRow{name: d, dir: true, count: seen[d]})
@@ -415,9 +416,9 @@ func (s *fileListScreen) rebuild() {
 	files := s.rows[firstFile:]
 	switch s.sortMode {
 	case sortName:
-		sort.SliceStable(files, func(a, b int) bool { return naturalLess(files[a].name, files[b].name) })
+		sort.SliceStable(files, func(a, b int) bool { return format.NaturalLess(files[a].name, files[b].name) })
 	case sortNameDesc:
-		sort.SliceStable(files, func(a, b int) bool { return naturalLess(files[b].name, files[a].name) })
+		sort.SliceStable(files, func(a, b int) bool { return format.NaturalLess(files[b].name, files[a].name) })
 	}
 
 	items := make([]Item, len(s.rows))

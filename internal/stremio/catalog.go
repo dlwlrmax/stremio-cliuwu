@@ -380,7 +380,7 @@ func GetMetaDetail(addons []Addon, mediaType, id, hint string) (MetaDetail, bool
 	return FetchMetaDetail(addons, mediaType, id, hint, true)
 }
 
-// fetchMetaDetail resolves a meta detail, joining an in-flight request for the
+// FetchMetaDetail resolves a meta detail, joining an in-flight request for the
 // same id. negative controls whether a total miss is remembered: prefetch
 // passes false, so a transient failure on a row the user hasn't reached yet
 // isn't cached and doesn't block a real attempt later.

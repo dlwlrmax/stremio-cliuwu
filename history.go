@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"stremio-cliuwu/internal/bitfield"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
 	"stremio-cliuwu/internal/stremio"
@@ -467,7 +468,7 @@ func UpdatePosition(videoID string, pos, duration float64) {
 	e.P, e.D, e.T = pos, duration, time.Now().Unix()
 	// Only a genuine change to the watched flag moves the sync clock. The
 	// per-second position ticks above keep updating P/D/T alone.
-	if !e.W && IsWatchedAt(pos, duration) {
+	if !e.W && format.IsWatchedAt(pos, duration) {
 		e.W = true
 		e.M = e.T
 	}
@@ -910,7 +911,7 @@ func inProgress(e HistoryEntry) bool {
 	if e.Watched {
 		return false
 	}
-	return HasResumePoint(e.Position, e.Duration)
+	return format.HasResumePoint(e.Position, e.Duration)
 }
 
 // ContinueTarget decides what "continue watching" should offer: resume the
@@ -968,11 +969,11 @@ func ContinueTarget() *ContinueItem {
 				item := &ContinueItem{
 					Entry:     e,
 					NextUp:    true,
-					LastLabel: fmtEp(top.Season, top.Episode, top.VideoID),
+					LastLabel: format.Ep(top.Season, top.Episode, top.VideoID),
 					Index:     top.NextEpisode,
 					Total:     top.EpisodeTotal,
 				}
-				if !videoAired(stremio.Video{Released: top.NextReleased}) {
+				if !format.VideoAired(stremio.Video{Released: top.NextReleased}) {
 					item.Airing = top.NextReleased
 				}
 				// Already started it — resume rather than announce it.
@@ -1051,11 +1052,11 @@ func ContinueList(n int) []ContinueItem {
 					EpisodeTotal: e.EpisodeTotal,
 				},
 				NextUp:    true,
-				LastLabel: fmtEp(e.Season, e.Episode, e.VideoID),
+				LastLabel: format.Ep(e.Season, e.Episode, e.VideoID),
 				Index:     e.NextEpisode,
 				Total:     e.EpisodeTotal,
 			}
-			if !videoAired(stremio.Video{Released: e.NextReleased}) {
+			if !format.VideoAired(stremio.Video{Released: e.NextReleased}) {
 				item.Airing = e.NextReleased
 			}
 			if next != nil && next.P > 0 {

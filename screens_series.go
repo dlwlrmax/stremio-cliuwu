@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -107,7 +108,7 @@ func (s *seasonScreen) Footer() string {
 
 func (s *seasonScreen) rebuild() {
 	states := EpisodeStates(s.show.ID)
-	specials := groupSpecials(s.sm.Videos)
+	specials := format.GroupSpecials(s.sm.Videos)
 
 	items := make([]Item, len(s.seasons))
 	for i, season := range s.seasons {
@@ -116,7 +117,7 @@ func (s *seasonScreen) rebuild() {
 		// never see — 0/39 for what turns out to be two titles.
 		if season == 0 && len(specials) > 1 {
 			items[i] = Item{
-				Label: bold(seasonLabel(season)),
+				Label: bold(format.SeasonLabel(season)),
 				Badge: grey(fmt.Sprintf("%d titles", len(specials))),
 			}
 			continue
@@ -131,7 +132,7 @@ func (s *seasonScreen) rebuild() {
 			if states[[2]int{season, v.Episode}].Watched {
 				done++
 			}
-			if !videoAired(v) {
+			if !format.VideoAired(v) {
 				upcoming++
 			}
 		}
@@ -147,7 +148,7 @@ func (s *seasonScreen) rebuild() {
 			badge += "  " + stWarn.Render(fmt.Sprintf("+%d upcoming", upcoming))
 		}
 		items[i] = Item{
-			Label:   bold(seasonLabel(season)),
+			Label:   bold(format.SeasonLabel(season)),
 			Badge:   badge,
 			Watched: aired > 0 && done == aired,
 		}
@@ -184,7 +185,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 		s.rebuild()
 		if regrouped && s.jumpTo < 0 {
-			s.list.Focus(indexOfSeason(s.seasons, landOn))
+			s.list.Focus(format.IndexOfSeason(s.seasons, landOn))
 		}
 
 		// When we're jumping straight past this screen, don't start the info
@@ -243,7 +244,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			// Specials on a kitsu-backed series are half a dozen separate
 			// releases sharing one season number, so offer those rather than
 			// a flat run of unrelated shorts.
-			if season == 0 && len(groupSpecials(s.sm.Videos)) > 1 {
+			if season == 0 && len(format.GroupSpecials(s.sm.Videos)) > 1 {
 				return s, push(newSpecialsScreen(s.show, s.sm))
 			}
 			return s, push(newEpisodeScreen(s.show, s.sm, season))
@@ -279,9 +280,9 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				s.rebuild()
 				s.list.Focus(i)
 				if all {
-					return s, toast(seasonLabel(season) + " marked unwatched")
+					return s, toast(format.SeasonLabel(season) + " marked unwatched")
 				}
-				return s, toast(seasonLabel(season) + " marked watched")
+				return s, toast(format.SeasonLabel(season) + " marked watched")
 			}
 		case "esc", "backspace":
 			return s, pop()
@@ -357,7 +358,7 @@ func (s *episodeScreen) Init() tea.Cmd {
 	)
 }
 
-func (s *episodeScreen) Title() string { return seasonLabel(s.season) }
+func (s *episodeScreen) Title() string { return format.SeasonLabel(s.season) }
 func (s *episodeScreen) Typing() bool  { return s.list.Typing() }
 
 func (s *episodeScreen) SetSize(w, h int) {
@@ -400,7 +401,7 @@ func (s *episodeScreen) rebuild() {
 		}
 
 		if pos > 0 && dur > 0 && !it.Watched {
-			glyph := "▶ " + fmtSecs(pos) + " / " + fmtSecs(dur)
+			glyph := "▶ " + format.Secs(pos) + " / " + format.Secs(dur)
 			if playing {
 				it.Badge = accent(glyph) + "  " + it.Badge
 			} else {
@@ -522,9 +523,9 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				s.rebuild()
 				s.list.Focus(i)
 				if now {
-					return s, toast("marked " + fmtEp(v.Season, v.Episode, v.ID) + " watched")
+					return s, toast("marked " + format.Ep(v.Season, v.Episode, v.ID) + " watched")
 				}
-				return s, toast("marked " + fmtEp(v.Season, v.Episode, v.ID) + " unwatched")
+				return s, toast("marked " + format.Ep(v.Season, v.Episode, v.ID) + " unwatched")
 			}
 		case "W":
 			// Whole season, in one write rather than one per episode.
@@ -543,9 +544,9 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				s.list.Focus(cur)
 			}
 			if allWatched {
-				return s, toast(seasonLabel(s.season) + " marked unwatched")
+				return s, toast(format.SeasonLabel(s.season) + " marked unwatched")
 			}
-			return s, toast(seasonLabel(s.season) + " marked watched")
+			return s, toast(format.SeasonLabel(s.season) + " marked watched")
 		case "esc", "backspace":
 			return s, pop()
 		case "q":
@@ -563,7 +564,7 @@ func (s *episodeScreen) streamFor(i int, resume float64) screen {
 		MediaType: "series",
 		VideoID:   v.ID,
 		StreamID:  v.StreamID(),
-		Label:     s.show.Name + " · " + fmtEp(v.Season, v.Episode, v.ID),
+		Label:     s.show.Name + " · " + format.Ep(v.Season, v.Episode, v.ID),
 		Resume:    resume,
 		Queue: &EpQueue{
 			Show: s.show, Season: s.season, Episodes: s.eps, Index: i,

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/paths"
 	"stremio-cliuwu/internal/stremio"
@@ -70,7 +71,7 @@ func (s *favsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 					// A favourited show has season 0 meaning "the whole
 					// thing", not the specials season.
 					if f.Season == 0 {
-						return noSeason
+						return format.NoSeason
 					}
 					return f.Season
 				}()))
@@ -194,7 +195,7 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, push(openMeta(stremio.Meta{
 					ID: sh.ID, Type: sh.Type, Name: sh.Name,
 					Year: sh.Year, Source: sh.Source, Base: sh.Base,
-				}, noSeason))
+				}, format.NoSeason))
 			}
 			if i >= len(s.entries) {
 				return s, nil
@@ -624,8 +625,8 @@ func (s *settingsScreen) rebuild() {
 			})
 		}},
 		{label: "date format", sub: "air dates and release dates",
-			badge: stSub.Render(dateSample(c.DateFormat)) + grey("  "+dateFormatName(c.DateFormat)), act: func() tea.Cmd {
-				ctx.cfg.DateFormat = nextDateFormat(ctx.cfg.DateFormat)
+			badge: stSub.Render(format.DateSample(c.DateFormat)) + grey("  "+format.DateFormatName(c.DateFormat)), act: func() tea.Cmd {
+				ctx.cfg.DateFormat = format.NextDateFormat(ctx.cfg.DateFormat)
 				return tea.Batch(s.save(), themeChanged())
 			}},
 

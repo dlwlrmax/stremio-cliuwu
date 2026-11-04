@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"sync"
 
@@ -24,7 +25,7 @@ type specialsNamedMsg struct {
 type specialsScreen struct {
 	baseScreen
 	show   stremio.Meta
-	groups []specialGroup
+	groups []format.SpecialGroup
 
 	id   asyncID
 	list listModel
@@ -37,7 +38,7 @@ func newSpecialsScreen(show stremio.Meta, sm stremio.SeriesMeta) *specialsScreen
 
 	s := &specialsScreen{
 		id: newAsyncID(), show: show,
-		groups: groupSpecials(sm.Videos), list: l,
+		groups: format.GroupSpecials(sm.Videos), list: l,
 	}
 	s.rebuild()
 	return s
@@ -168,7 +169,7 @@ func (s *specialsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				Type:   "series",
 				Name:   g.Title,
 				Source: s.show.Source,
-			}, noSeason))
+			}, format.NoSeason))
 
 		case "esc", "backspace":
 			return s, pop()

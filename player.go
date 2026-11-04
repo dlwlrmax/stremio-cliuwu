@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -401,7 +402,7 @@ func mpvTitle(req PlayRequest) string {
 	switch mode {
 	case "formatted":
 		if e.Episode > 0 {
-			out := fmt.Sprintf("%s - %s", e.Name, fmtEp(e.Season, e.Episode, e.VideoID))
+			out := fmt.Sprintf("%s - %s", e.Name, format.Ep(e.Season, e.Episode, e.VideoID))
 			// Only when the addon has a real one. Some fill the field with
 			// "Episode #29.1", which says nothing the number has not.
 			if t := strings.TrimSpace(e.EpTitle); t != "" && !strings.HasPrefix(t, "Episode #") {
@@ -541,7 +542,7 @@ func (p *Player) onProperty(name string, data any) {
 		p.state.Buffering, _ = data.(bool)
 	case "media-title":
 		if s, ok := data.(string); ok {
-			p.state.Title = cleanTitle(s)
+			p.state.Title = format.CleanTitle(s)
 		}
 	case "sid":
 		// A track number means subtitles are on (autoloaded or hand-picked).
@@ -585,7 +586,7 @@ func (p *Player) onProperty(name string, data any) {
 	prefetch := false
 	if now != nil && !p.prefetched && p.cfg.AutoNext &&
 		now.Queue.HasNext() && st.Duration > 0 &&
-		st.Duration-st.Pos <= prefetchLead(st.Duration) {
+		st.Duration-st.Pos <= format.PrefetchLead(st.Duration) {
 		p.prefetched = true
 		prefetch = true
 	}

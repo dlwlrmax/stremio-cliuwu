@@ -3,6 +3,7 @@ package main
 import (
 	"regexp"
 	"sort"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"unicode"
@@ -212,12 +213,12 @@ func FmtStream(in streamInfo, o rowOpts) string {
 	// and one shorter than where you stopped can't resume you there.
 	dur := ""
 	if in.Dur > 0 {
-		dur = grey(fmtSecs(float64(in.Dur)))
+		dur = grey(format.Secs(float64(in.Dur)))
 		switch {
 		case o.Resume > 5 && float64(in.Dur) < o.Resume:
-			dur = stErr.Render(fmtSecs(float64(in.Dur)))
+			dur = stErr.Render(format.Secs(float64(in.Dur)))
 		case o.Median > 0 && abs(in.Dur-o.Median) > 60:
-			dur = yell(fmtSecs(float64(in.Dur)))
+			dur = yell(format.Secs(float64(in.Dur)))
 		}
 	}
 

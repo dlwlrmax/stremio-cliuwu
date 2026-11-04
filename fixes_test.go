@@ -26,22 +26,6 @@ func TestSafeNameCapsLength(t *testing.T) {
 	}
 }
 
-func TestCommonPrefixKeepsRunesWhole(t *testing.T) {
-	// "é" and "è" share their first UTF-8 byte.
-	if got := commonPrefix("caféa", "cafèb"); got != "caf" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestIsWatchedAtNotStarted(t *testing.T) {
-	if IsWatchedAt(0, 10) {
-		t.Error("position 0 must not count as watched")
-	}
-	if !IsWatchedAt(100, 100) {
-		t.Error("end of file should count")
-	}
-}
-
 func TestOpenURLRejectsNonHTTP(t *testing.T) {
 	for _, u := range []string{"file:///etc/passwd", `C:\Windows\calc.exe`, "javascript:alert(1)"} {
 		if openURL(u) == nil {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -45,7 +46,7 @@ func epItem(v stremio.Video, watched bool) Item {
 	// Catalogs list episodes well before they air. Without a marker they look
 	// identical to everything else, and you only find out when the stream
 	// search comes back empty.
-	if !videoAired(v) {
+	if !format.VideoAired(v) {
 		// The date, same as an aired episode — a row is for scanning, and
 		// switching format between aired and unaired broke the column. How
 		// far off it is belongs in the info panel, where there's room to say
@@ -74,14 +75,14 @@ func HistoryItem(e HistoryEntry) Item {
 	if e.Watched {
 		badge += "  " + good("✓")
 	} else if e.Position > 0 && e.Duration > 0 {
-		badge += "  " + yell("▶ "+fmtSecs(e.Position))
+		badge += "  " + yell("▶ "+format.Secs(e.Position))
 	}
 
 	kind := "dmy"
 	if ctx != nil {
 		kind = ctx.cfg.DateFormat
 	}
-	badge += grey("  " + e.WatchedAt.Format(dateLayout(kind)))
+	badge += grey("  " + e.WatchedAt.Format(format.DateLayout(kind)))
 
 	return Item{Label: label, Badge: badge, Watched: e.Watched}
 }
@@ -118,7 +119,7 @@ func ShowHistoryItem(sh ShowSummary) Item {
 		if ctx != nil {
 			kind = ctx.cfg.DateFormat
 		}
-		badge = grey(time.Unix(sh.SeenAt, 0).Format(dateLayout(kind))) + "  " + badge
+		badge = grey(time.Unix(sh.SeenAt, 0).Format(format.DateLayout(kind))) + "  " + badge
 	}
 	return Item{Label: label, Sub: sub, Badge: badge}
 }
@@ -155,7 +156,7 @@ func FavItem(f Favourite, recent []HistoryEntry) Item {
 			if lastEntry.Watched {
 				badge += "  " + good("✓")
 			} else if lastEntry.Position > 0 && lastEntry.Duration > 0 {
-				badge += "  " + yell("▶ "+fmtSecs(lastEntry.Position))
+				badge += "  " + yell("▶ "+format.Secs(lastEntry.Position))
 			} else if lastEntry.Episode > 0 {
 				badge += "  " + grey(fmt.Sprintf("S%02dE%02d", lastEntry.Season, lastEntry.Episode))
 			}

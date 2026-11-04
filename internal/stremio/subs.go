@@ -37,7 +37,7 @@ type Subtitle struct {
 
 var CacheSubs = cache.New[[]Subtitle](10*time.Minute, 60)
 
-// cacheSubsMiss remembers "nothing found" for a much shorter time. Never
+// CacheSubsMiss remembers "nothing found" for a much shorter time. Never
 // caching it meant every keystroke in the picker re-asked every addon; caching
 // it for the full ten minutes meant fixing a broken addon looked like it had
 // done nothing.
@@ -88,7 +88,7 @@ var (
 	subsFullKey   = map[string]string{}
 )
 
-// dropSubsCache forgets a hit and a miss for q, so the next request goes back
+// DropSubsCache forgets a hit and a miss for q, so the next request goes back
 // out to the addons.
 func DropSubsCache(q SubsQuery) {
 	base := subsCacheKey(q)

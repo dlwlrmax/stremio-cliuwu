@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync/atomic"
@@ -505,7 +506,7 @@ func (s *catalogScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 				return s, s.loadPage(len(s.metas))
 			}
-			return s, push(openMeta(s.metas[i], noSeason))
+			return s, push(openMeta(s.metas[i], format.NoSeason))
 		case "f":
 			if i := s.list.Selected(); i >= 0 && !s.moreRow(i) {
 				mt := s.metas[i]
@@ -681,7 +682,7 @@ func (s *searchScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 		if s.autoOpen && !s.autoDone && len(s.shown) > 0 {
 			s.autoDone = true
-			return s, push(openMeta(s.metas[s.shown[0]], noSeason))
+			return s, push(openMeta(s.metas[s.shown[0]], format.NoSeason))
 		}
 		return s, s.syncInfo()
 
@@ -704,7 +705,7 @@ func (s *searchScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.syncInfo()
 		case "enter":
 			if i := s.list.Selected(); i >= 0 && i < len(s.shown) {
-				return s, push(openMeta(s.metas[s.shown[i]], noSeason))
+				return s, push(openMeta(s.metas[s.shown[i]], format.NoSeason))
 			}
 		case "f":
 			if i := s.list.Selected(); i >= 0 && i < len(s.shown) {

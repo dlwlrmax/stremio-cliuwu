@@ -2,6 +2,7 @@ package main
 
 import (
 	"sort"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"time"
 )
@@ -48,7 +49,7 @@ func (q *EpQueue) HasNext() bool {
 // yet — autoplay and prefetch both depend on that.
 func (q *EpQueue) Next() (stremio.Video, int, bool) {
 	v, season, ok := q.Upcoming()
-	if !ok || !videoAired(v) {
+	if !ok || !format.VideoAired(v) {
 		return stremio.Video{}, 0, false
 	}
 	return v, season, true

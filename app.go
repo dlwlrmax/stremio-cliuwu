@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
@@ -473,14 +474,14 @@ func quitCmd() tea.Cmd {
 	switch {
 	case playing && pending > 0:
 		// The part files survive, so this is interrupted rather than lost.
-		msg = fmt.Sprintf("stop watching and quit? %s still downloading.", plural(pending, "file"))
+		msg = fmt.Sprintf("stop watching and quit? %s still downloading.", format.Plural(pending, "file"))
 		noLabel = "keep watching"
 		if !ctx.cfg.CloseMpvOnExit {
-			msg = fmt.Sprintf("quit? mpv keeps playing, but %s still downloading.", plural(pending, "file"))
+			msg = fmt.Sprintf("quit? mpv keeps playing, but %s still downloading.", format.Plural(pending, "file"))
 			noLabel = "stay"
 		}
 	case pending > 0:
-		msg = fmt.Sprintf("quit? %s still downloading — they'll resume next time.", plural(pending, "file"))
+		msg = fmt.Sprintf("quit? %s still downloading — they'll resume next time.", format.Plural(pending, "file"))
 		noLabel = "stay"
 	default:
 		msg = "stop watching and quit?"
@@ -688,7 +689,7 @@ func (a *app) playerBar() string {
 		label = s.Title
 	}
 
-	right := progressGlyph(s.Pos, s.Duration)
+	right := format.ProgressGlyph(s.Pos, s.Duration)
 	if s.QueueLen > 1 {
 		right = stHint.Render(itoa(s.QueuePos)+"/"+itoa(s.QueueLen)) + "  " + right
 	}
