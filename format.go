@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -206,21 +207,12 @@ func untilRelease(released string) string {
 // unparseable or missing date counts as aired — plenty of catalogs leave it
 // blank, and refusing to play those would be worse than the occasional
 // unaired entry slipping through.
-func videoAired(v Video) bool {
+func videoAired(v stremio.Video) bool {
 	t, ok := parseRelease(v.Released)
 	if !ok {
 		return true
 	}
 	return !t.After(time.Now())
-}
-
-// fmtVideoID turns "tt1234:2:5" or "kitsu:123:7" into "S02E05".
-// kitsuIDOf pulls the numeric id out of a kitsu meta id, or returns "".
-func kitsuIDOf(id string) string {
-	if !strings.HasPrefix(id, "kitsu:") {
-		return ""
-	}
-	return strings.TrimPrefix(id, "kitsu:")
 }
 
 // specialGroup is one collection inside the specials season — an OVA, a
@@ -240,7 +232,7 @@ type specialGroup struct {
 // Season 0 of a merged anime is a dumping ground: forty-odd unrelated shorts
 // from half a dozen different releases. They arrive tagged with which release
 // they belong to, so the list can offer those instead.
-func groupSpecials(videos []Video) []specialGroup {
+func groupSpecials(videos []stremio.Video) []specialGroup {
 	var out []specialGroup
 	at := map[string]int{}
 	names := map[string][]string{}
@@ -366,6 +358,7 @@ func fmtEp(season, episode int, videoID string) string {
 	return fmtVideoID(videoID)
 }
 
+// fmtVideoID turns "tt1234:2:5" or "kitsu:123:7" into "S02E05".
 func fmtVideoID(videoID string) string {
 	parts := strings.Split(videoID, ":")
 	if len(parts) >= 3 {

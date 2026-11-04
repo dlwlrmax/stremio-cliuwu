@@ -10,6 +10,7 @@ import (
 	"stremio-cliuwu/internal/bitfield"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -109,7 +110,7 @@ func stremioPost(endpoint string, body any, out any) error {
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
-	r, err := httpClient.Do(req)
+	r, err := stremio.HttpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -349,7 +350,7 @@ func MergeLibrary(items []libraryItem) int {
 			continue // local is newer; remote loses the tie
 		}
 
-		sh := hist.show(it.ID, Meta{Name: it.Name, Type: it.Type, Source: "stremio"})
+		sh := hist.show(it.ID, stremio.Meta{Name: it.Name, Type: it.Type, Source: "stremio"})
 		if sh.Poster == "" {
 			sh.Poster = it.Poster
 		}

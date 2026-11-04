@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +17,8 @@ import (
 // pointer beats threading five fields through every constructor.
 type appCtx struct {
 	cfg        AppConfig
-	refs       AddonList
-	addons     []Addon
+	refs       stremio.AddonList
+	addons     []stremio.Addon
 	player     *Player
 	downloader *Downloader
 	prog       *tea.Program
@@ -29,13 +30,13 @@ type appCtx struct {
 
 // Addons returns the loaded addons. The slice is replaced wholesale on reload,
 // never edited, so holding on to it is safe.
-func (c *appCtx) Addons() []Addon {
+func (c *appCtx) Addons() []stremio.Addon {
 	c.addonsMu.RLock()
 	defer c.addonsMu.RUnlock()
 	return c.addons
 }
 
-func (c *appCtx) setAddons(a []Addon) {
+func (c *appCtx) setAddons(a []stremio.Addon) {
 	c.addonsMu.Lock()
 	c.addons = a
 	c.addonsMu.Unlock()
@@ -44,8 +45,8 @@ func (c *appCtx) setAddons(a []Addon) {
 var ctx *appCtx
 
 // StreamAddons returns addons that can actually serve streams.
-func (c *appCtx) StreamAddons() []Addon {
-	var out []Addon
+func (c *appCtx) StreamAddons() []stremio.Addon {
+	var out []stremio.Addon
 	for _, a := range c.Addons() {
 		if a.Err == nil && a.HasStreams() {
 			out = append(out, a)
@@ -95,8 +96,8 @@ type reloadAddonsMsg struct{}
 // addonsReloadedMsg carries a finished reload back to the UI goroutine, which
 // is the only place ctx.refs and ctx.addons are written.
 type addonsReloadedMsg struct {
-	refs   AddonList
-	addons []Addon
+	refs   stremio.AddonList
+	addons []stremio.Addon
 }
 
 // themeChangedMsg forces every screen to re-render its rows.
@@ -109,7 +110,7 @@ type addonsReloadedMsg struct {
 type themeChangedMsg struct{}
 
 // addonsReadyMsg carries the manifests once the background fetch is done.
-type addonsReadyMsg struct{ Addons []Addon }
+type addonsReadyMsg struct{ Addons []stremio.Addon }
 
 func themeChanged() tea.Cmd { return func() tea.Msg { return themeChangedMsg{} } }
 
@@ -304,8 +305,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reloadAddonsMsg:
 		// Fetching manifests takes seconds; doing it here froze the whole UI.
 		return a, func() tea.Msg {
-			refs := LoadAddonRefs()
-			return addonsReloadedMsg{refs: refs, addons: LoadAddons(refs)}
+			refs := stremio.LoadAddonRefs()
+			return addonsReloadedMsg{refs: refs, addons: stremio.LoadAddons(refs)}
 		}
 
 	case addonsReloadedMsg:
@@ -314,9 +315,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cached results carry the ranks they were fetched with, so without
 		// this a reorder wouldn't take effect until the five minute TTL ran
 		// out — which reads as the reorder having done nothing.
-		cacheStreams.Clear()
-		cacheSubs.Clear()
-		cacheSubsMiss.Clear()
+		stremio.CacheStreams.Clear()
+		stremio.CacheSubs.Clear()
+		stremio.CacheSubsMiss.Clear()
 		return a, nil
 
 	case tea.KeyMsg:
@@ -428,7 +429,7 @@ func (a *app) advanceTo(prev PlayRequest, prefix string) tea.Cmd {
 
 	addons := ctx.StreamAddons()
 	videoID := t.VideoID
-	go GetStreams(addons, "series", videoID) // warm the cache, don't navigate
+	go stremio.GetStreams(addons, "series", videoID) // warm the cache, don't navigate
 
 	return toast(prefix + t.Label + " · ready when you are")
 }

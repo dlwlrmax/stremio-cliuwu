@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"stremio-cliuwu/internal/cache"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
 
@@ -409,7 +410,7 @@ func posterVariants(url string, biggest bool) []string {
 func posterImg(url string) (*image.RGBA, bool) {
 	raw, ok := cachePosterBytes.Get(url)
 	if !ok {
-		res, err := httpClient.Get(url)
+		res, err := stremio.HttpClient.Get(url)
 		if err != nil {
 			return nil, false
 		}

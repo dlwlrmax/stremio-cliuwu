@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
 	"time"
@@ -64,7 +65,7 @@ func CheckUpdate() tea.Cmd {
 
 		info := updateInfo{}
 		ok := false
-		if err := getJSONTimeout(releasesURL, &resp, 8*time.Second); err == nil &&
+		if err := stremio.GetJSONTimeout(releasesURL, &resp, 8*time.Second); err == nil &&
 			resp.TagName != "" && !resp.Draft {
 			ok = true
 			info = updateInfo{

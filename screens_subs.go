@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/stremio"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -15,22 +16,22 @@ import (
 
 type subsLoadedMsg struct {
 	id   asyncID
-	subs []Subtitle
+	subs []stremio.Subtitle
 }
 
 type subsScreen struct {
 	baseScreen
 	id     asyncID
-	query  SubsQuery
+	query  stremio.SubsQuery
 	label  string
-	subs   []Subtitle
+	subs   []stremio.Subtitle
 	shown  []int
 	active string // url of the track currently loaded, for the marker
 
 	// showID is the series this picker belongs to, or "" for a movie/"other".
 	// It's what a manual pick is remembered under.
 	showID  string
-	pending *Subtitle // the track the user just picked, awaiting mpv's word
+	pending *stremio.Subtitle // the track the user just picked, awaiting mpv's word
 
 	list   listModel
 	busy   busy
@@ -40,7 +41,7 @@ type subsScreen struct {
 	langIx int
 }
 
-func newSubsScreen(label string, q SubsQuery, shipped []Subtitle, showID string) *subsScreen {
+func newSubsScreen(label string, q stremio.SubsQuery, shipped []stremio.Subtitle, showID string) *subsScreen {
 	l := newList()
 	l.Empty = "no subtitles found"
 	l.Numbered = true
@@ -78,7 +79,7 @@ func (s *subsScreen) Init() tea.Cmd {
 		func() tea.Msg {
 			return subsLoadedMsg{
 				id:   id,
-				subs: MergeSubtitles(shipped, GetSubtitles(addons, q), ctx.cfg.SubtitleLang),
+				subs: stremio.MergeSubtitles(shipped, stremio.GetSubtitles(addons, q), ctx.cfg.SubtitleLang),
 			}
 		},
 	)
@@ -124,7 +125,7 @@ func (s *subsScreen) collectLangs() {
 		}
 	}
 	if want == "" {
-		if sub := PickPreferred(s.subs, langs.Preferred(ctx.cfg.SubtitleLang)); sub != nil {
+		if sub := stremio.PickPreferred(s.subs, langs.Preferred(ctx.cfg.SubtitleLang)); sub != nil {
 			want = langs.Name(sub.Lang)
 		}
 	}
@@ -286,7 +287,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			)
 
 		case "R":
-			dropSubsCache(s.query)
+			stremio.DropSubsCache(s.query)
 			s.loaded = false
 			s.id = newAsyncID()
 			return s, s.Init()

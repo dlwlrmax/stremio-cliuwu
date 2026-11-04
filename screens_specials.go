@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,14 +23,14 @@ type specialsNamedMsg struct {
 
 type specialsScreen struct {
 	baseScreen
-	show   Meta
+	show   stremio.Meta
 	groups []specialGroup
 
 	id   asyncID
 	list listModel
 }
 
-func newSpecialsScreen(show Meta, sm SeriesMeta) *specialsScreen {
+func newSpecialsScreen(show stremio.Meta, sm stremio.SeriesMeta) *specialsScreen {
 	l := newList()
 	l.Empty = "no specials"
 	l.Numbered = true
@@ -79,8 +80,8 @@ func (s *specialsScreen) Init() tea.Cmd {
 			go func(kitsuID string) {
 				defer wg.Done()
 
-				m := Meta{ID: "kitsu:" + kitsuID, Type: "series"}
-				sm := GetSeriesMeta(addons, m)
+				m := stremio.Meta{ID: "kitsu:" + kitsuID, Type: "series"}
+				sm := stremio.GetSeriesMeta(addons, m)
 
 				// Every video counts. Filtering on the episode number assumed
 				// one is always present, and a specials entry may not number
@@ -162,7 +163,7 @@ func (s *specialsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			// Opened as the title it is. It won't merge back into the parent
 			// series — that only happens for entries mapping to a numbered
 			// season, and a special maps to zero.
-			return s, push(openMeta(Meta{
+			return s, push(openMeta(stremio.Meta{
 				ID:     "kitsu:" + g.KitsuID,
 				Type:   "series",
 				Name:   g.Title,

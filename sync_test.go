@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"stremio-cliuwu/internal/bitfield"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"testing"
 )
@@ -53,7 +54,7 @@ func TestApplyWatchedBitfieldSparseStoreAligned(t *testing.T) {
 
 func TestWatchedBitfieldSparseSendsOnlyAnchor(t *testing.T) {
 	const show = "tt2"
-	cacheSeries.Clear()
+	stremio.CacheSeries.Clear()
 	sh := &showState{Eps: map[string]*epState{
 		epKey(1, 4):  {W: true},
 		epKey(1, 9):  {W: true},
@@ -71,10 +72,10 @@ func TestWatchedBitfieldSparseSendsOnlyAnchor(t *testing.T) {
 
 func TestWatchedBitfieldFullListKeepsAllBits(t *testing.T) {
 	const show = "tt3"
-	cacheSeries.Set(show, SeriesMeta{Videos: []Video{
+	stremio.CacheSeries.Set(show, stremio.SeriesMeta{Videos: []stremio.Video{
 		{Season: 1, Episode: 1}, {Season: 1, Episode: 2}, {Season: 1, Episode: 3}, {Season: 1, Episode: 4},
 	}})
-	t.Cleanup(cacheSeries.Clear)
+	t.Cleanup(stremio.CacheSeries.Clear)
 
 	sh := &showState{Eps: map[string]*epState{epKey(1, 1): {W: true}, epKey(1, 3): {W: true}}}
 	bf := watchedBitfield(show, sh)

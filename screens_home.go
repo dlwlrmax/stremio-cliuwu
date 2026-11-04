@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -178,7 +179,7 @@ func (s *menuScreen) rebuild() {
 	if ctx.loading {
 		s.entries = append(s.entries, menuEntry{head: "loading addons…"})
 	}
-	counts := KindsAvailable(ctx.Addons())
+	counts := stremio.KindsAvailable(ctx.Addons())
 	for _, b := range []struct{ key, kind, label string }{
 		{"m", "movie", "movies"},
 		{"s", "show", "shows"},
@@ -200,7 +201,7 @@ func (s *menuScreen) rebuild() {
 		})
 	}
 
-	searchable := len(SearchCatalogs(ctx.Addons()))
+	searchable := len(stremio.SearchCatalogs(ctx.Addons()))
 	s.entries = append(s.entries,
 		menuEntry{key: "/", label: "search", sub: fmt.Sprintf("%d searchable catalog(s)", searchable),
 			open: func() tea.Cmd { return push(searchPrompt()) }},
@@ -335,7 +336,7 @@ func (s *menuScreen) View() string {
 // menu › show › season › streams — meaning `b` out of the stream picker lands
 // on the episode list, the way the old client behaved.
 func resumeScreen(e HistoryEntry) screen {
-	m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Year: e.Year, Source: e.Source, Base: e.Base}
+	m := stremio.Meta{ID: e.ID, Type: e.Type, Name: e.Name, Year: e.Year, Source: e.Source, Base: e.Base}
 
 	// Episode number, not season: a special sits in season 0 and would
 	// otherwise be resumed as if it were a film.

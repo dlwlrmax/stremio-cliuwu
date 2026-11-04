@@ -9,6 +9,7 @@ import (
 	"stremio-cliuwu/internal/bitfield"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
 	"time"
@@ -204,7 +205,7 @@ func (h *historyStore) reindex() {
 	}
 }
 
-func (h *historyStore) show(id string, m Meta) *showState {
+func (h *historyStore) show(id string, m stremio.Meta) *showState {
 	sh, ok := h.data.Shows[id]
 	if !ok {
 		sh = &showState{Eps: map[string]*epState{}}
@@ -375,7 +376,7 @@ func AddHistory(e HistoryEntry, maxEntries int) {
 	defer hist.mu.Unlock()
 	hist.load()
 
-	sh := hist.show(e.ID, Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
+	sh := hist.show(e.ID, stremio.Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
 	now := time.Now().Unix()
 	sh.SeenAt = now
 
@@ -506,7 +507,7 @@ func SetWatchedByEpisode(e HistoryEntry, watched bool) {
 	defer hist.mu.Unlock()
 	hist.load()
 
-	sh := hist.show(e.ID, Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
+	sh := hist.show(e.ID, stremio.Meta{Name: e.Name, Type: e.Type, Source: e.Source, Year: e.Year, Base: e.Base})
 	key := epKey(e.Season, e.Episode)
 
 	st := sh.Eps[key]
@@ -552,7 +553,7 @@ func ToggleWatchedByEpisode(e HistoryEntry) bool {
 // This is what the old format handled worst: 300 episodes meant 300 full
 // records and 300 lines of history. Now it's 300 × 19 bytes of state and no
 // recent entries at all.
-func SetSeasonWatched(show Meta, season int, eps []Video, watched bool) {
+func SetSeasonWatched(show stremio.Meta, season int, eps []stremio.Video, watched bool) {
 	hist.mu.Lock()
 	defer hist.mu.Unlock()
 	hist.load()
@@ -971,7 +972,7 @@ func ContinueTarget() *ContinueItem {
 					Index:     top.NextEpisode,
 					Total:     top.EpisodeTotal,
 				}
-				if !videoAired(Video{Released: top.NextReleased}) {
+				if !videoAired(stremio.Video{Released: top.NextReleased}) {
 					item.Airing = top.NextReleased
 				}
 				// Already started it — resume rather than announce it.
@@ -1054,7 +1055,7 @@ func ContinueList(n int) []ContinueItem {
 				Index:     e.NextEpisode,
 				Total:     e.EpisodeTotal,
 			}
-			if !videoAired(Video{Released: e.NextReleased}) {
+			if !videoAired(stremio.Video{Released: e.NextReleased}) {
 				item.Airing = e.NextReleased
 			}
 			if next != nil && next.P > 0 {

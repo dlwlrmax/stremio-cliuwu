@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -102,16 +103,16 @@ type PlayRequest struct {
 	Label     string
 	URL       string
 	Resume    float64
-	Entry     HistoryEntry // written to history when playback starts
-	Queue     *EpQueue     // non-nil for series, drives autoplay
-	Addons    []Addon      // needed to resolve the next episode
+	Entry     HistoryEntry    // written to history when playback starts
+	Queue     *EpQueue        // non-nil for series, drives autoplay
+	Addons    []stremio.Addon // needed to resolve the next episode
 
 	// Carried from the chosen stream so the subtitle picker can ask for
 	// this exact file rather than the title in general.
 	VideoHash string
 	VideoSize int64
 	Filename  string
-	Subs      []Subtitle // shipped with the stream itself
+	Subs      []stremio.Subtitle // shipped with the stream itself
 }
 
 // ── Player ────────────────────────────────────────────────────────────────────
@@ -713,7 +714,7 @@ func (p *Player) maybeAutoSubtitle() {
 		// this exact file and will play via mpv's --slang, so there is nothing
 		// worth fetching. A shipped track in a lower-preference language is not
 		// enough: the user still wants a plugin track for the top one.
-		if PickPreferred(req.Subs, prefs[:1]) != nil {
+		if stremio.PickPreferred(req.Subs, prefs[:1]) != nil {
 			return
 		}
 	}
@@ -729,7 +730,7 @@ func (p *Player) maybeAutoSubtitle() {
 			return
 		}
 
-		subs := MergeSubtitles(req.Subs, GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
+		subs := stremio.MergeSubtitles(req.Subs, stremio.GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
 
 		// A new play() may have started while the network was slow. Its result
 		// belongs to a file that is no longer loaded, so drop it.
@@ -763,7 +764,7 @@ func (p *Player) maybeAutoSubtitle() {
 		// merged order (a dead link fails inside mpv, so move on to the next).
 		// A lower tier is only reached when neither source has the language.
 		for _, prefLang := range prefs {
-			if PickPreferred(req.Subs, []string{prefLang}) != nil {
+			if stremio.PickPreferred(req.Subs, []string{prefLang}) != nil {
 				return
 			}
 			for i := range subs {
@@ -786,7 +787,7 @@ func (p *Player) maybeAutoSubtitle() {
 // caller has already tried the show language inside the file (tryEmbedded), so
 // its tier here is the plugins; a language absent from both falls through to
 // the normal per-tier handling for the remaining languages.
-func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
+func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []stremio.Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
 	lang := pref.Lang
 
 	tiers := []string{lang}
@@ -803,7 +804,7 @@ func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtit
 			}
 			continue
 		}
-		if PickPreferred(req.Subs, []string{tier}) != nil {
+		if stremio.PickPreferred(req.Subs, []string{tier}) != nil {
 			return
 		}
 		for j := range subs {
@@ -845,7 +846,7 @@ func (p *Player) tryEmbedded(gen uint64, req *PlayRequest, lang, track string) b
 
 // loadShowPlugin loads the show's language from the fetched plugin tracks. A
 // dead link fails inside mpv, so each candidate is tried in turn.
-func (p *Player) loadShowPlugin(gen uint64, subs []Subtitle, shipped map[string]bool, lang string) bool {
+func (p *Player) loadShowPlugin(gen uint64, subs []stremio.Subtitle, shipped map[string]bool, lang string) bool {
 	for i := range subs {
 		s := subs[i]
 		if shipped[s.URL] || langs.Name(s.Lang) != lang {
@@ -1008,7 +1009,7 @@ func (p *Player) isCurrent(gen uint64) bool {
 	return p.playGen == gen
 }
 
-func (p *Player) addSubtitle(gen uint64, s Subtitle) bool {
+func (p *Player) addSubtitle(gen uint64, s stremio.Subtitle) bool {
 	if !p.isCurrent(gen) {
 		return false
 	}

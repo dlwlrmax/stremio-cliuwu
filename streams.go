@@ -3,6 +3,7 @@ package main
 import (
 	"regexp"
 	"sort"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"unicode"
 
@@ -67,7 +68,7 @@ type streamInfo struct {
 	Detail   []string // the details pane's lines
 }
 
-func parseStream(s Stream) streamInfo {
+func parseStream(s stremio.Stream) streamInfo {
 	cleanName := stripInvis(starRe.ReplaceAllString(s.Name, ""))
 	cleanTitle := stripInvis(s.Title)
 	cleanDesc := stripInvis(s.Description)
@@ -306,13 +307,13 @@ var libraryRe = regexp.MustCompile(`(?i)[📌🔍]\s*library\b`)
 
 // streamInLibrary reports whether the stream is already in your debrid
 // library: no fetch, no waiting, and a copy you've chosen before.
-func streamInLibrary(s Stream) bool {
+func streamInLibrary(s stremio.Stream) bool {
 	return libraryRe.MatchString(s.Name + " " + s.Description + " " + s.Title)
 }
 
 // streamCached classifies a stream: 1 cached, -1 explicitly not cached,
 // 0 unknown (a direct HTTP addon, say, where the question doesn't apply).
-func streamCached(s Stream) int {
+func streamCached(s stremio.Stream) int {
 	// An addon that states it wins over anything parsed out of the text.
 	if s.Cached != nil {
 		if *s.Cached {
@@ -364,7 +365,7 @@ func matchWords(s string) string {
 // Matched across the name, title, description and filename together: a
 // release is sometimes flagged in the addon's label and sometimes only in
 // the filename.
-func StreamBlocked(s Stream, terms []string) bool {
+func StreamBlocked(s stremio.Stream, terms []string) bool {
 	if len(terms) == 0 {
 		return false
 	}
@@ -412,13 +413,13 @@ func StreamBlocked(s Stream, terms []string) bool {
 // scores as unknown — sank below one whose results are detectably cached,
 // however high you'd placed it. Reordering the list then looked like it did
 // nothing at all for that addon.
-func SortStreams(streams []Stream, preferred, binge string, cachedFirst bool) []Stream {
+func SortStreams(streams []stremio.Stream, preferred, binge string, cachedFirst bool) []stremio.Stream {
 	pref := strings.ToUpper(preferred)
 
 	// Keys are worked out once per stream: the library and cache checks are
 	// regex matches, and a comparator runs them O(n log n) times over.
 	type keyed struct {
-		s       Stream
+		s       stremio.Stream
 		binge   bool
 		library bool
 		cache   int
@@ -466,7 +467,7 @@ const streamDetailMax = 12
 //
 // Cleaned per line rather than as a whole — stripInvis folds whitespace, and
 // the line breaks are the layout the addon chose.
-func streamDetailLines(s Stream) []string {
+func streamDetailLines(s stremio.Stream) []string {
 	clean := func(text string) []string {
 		var out []string
 		for _, ln := range strings.Split(text, "\n") {

@@ -3,19 +3,20 @@ package main
 import (
 	"fmt"
 	"sort"
+	"stremio-cliuwu/internal/stremio"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 type seriesMetaMsg struct {
 	id      asyncID
-	sm      SeriesMeta
+	sm      stremio.SeriesMeta
 	seasons []int
 }
 
 type episodesMsg struct {
 	id  asyncID
-	eps []Video
+	eps []stremio.Video
 }
 
 // ── Season picker ─────────────────────────────────────────────────────────────
@@ -23,14 +24,14 @@ type episodesMsg struct {
 type seasonScreen struct {
 	baseScreen
 	id     asyncID
-	show   Meta
+	show   stremio.Meta
 	jumpTo int // season to open immediately, or noSeason for none
 	jumped bool
 
 	// Set when resuming from history: the episode to open, and where in it.
 	autoEpisode int
 	autoResume  float64
-	sm          SeriesMeta
+	sm          stremio.SeriesMeta
 	seasons     []int
 
 	list   listModel
@@ -39,7 +40,7 @@ type seasonScreen struct {
 	loaded bool
 }
 
-func newSeasonScreen(m Meta, jumpTo int) *seasonScreen {
+func newSeasonScreen(m stremio.Meta, jumpTo int) *seasonScreen {
 	l := newList()
 	l.Empty = "no season data"
 	return &seasonScreen{
@@ -62,7 +63,7 @@ func (s *seasonScreen) Init() tea.Cmd {
 	return tea.Batch(
 		s.busy.start("fetching episode list…"),
 		func() tea.Msg {
-			sm := GetSeriesMeta(ctx.Addons(), m)
+			sm := stremio.GetSeriesMeta(ctx.Addons(), m)
 
 			// Season 0 is a real season — it's where specials, OVAs and
 			// recaps live. On a kitsu-backed series it opens a list of those
@@ -171,7 +172,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		// two separate records for one show.
 		landOn, regrouped := 0, false
 		if s.sm.ID != "" && s.sm.ID != s.show.ID {
-			landOn, regrouped = s.sm.SeasonOf(kitsuIDOf(s.show.ID))
+			landOn, regrouped = s.sm.SeasonOf(stremio.KitsuIDOf(s.show.ID))
 			s.show.ID = s.sm.ID
 			if s.sm.Name != "" {
 				s.show.Name = s.sm.Name
@@ -260,7 +261,7 @@ func (s *seasonScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "w", "W":
 			if i := s.list.Selected(); i >= 0 {
 				season := s.seasons[i]
-				var eps []Video
+				var eps []stremio.Video
 				for _, v := range s.sm.Videos {
 					if v.Season == season {
 						eps = append(eps, v)
@@ -306,10 +307,10 @@ func (s *seasonScreen) View() string {
 type episodeScreen struct {
 	baseScreen
 	id     asyncID
-	show   Meta
-	sm     SeriesMeta
+	show   stremio.Meta
+	sm     stremio.SeriesMeta
 	season int
-	eps    []Video
+	eps    []stremio.Video
 
 	// Resume target, set when arriving from continue-watching.
 	autoEpisode int
@@ -322,7 +323,7 @@ type episodeScreen struct {
 	loaded bool
 }
 
-func newEpisodeScreen(m Meta, sm SeriesMeta, season int) *episodeScreen {
+func newEpisodeScreen(m stremio.Meta, sm stremio.SeriesMeta, season int) *episodeScreen {
 	l := newList()
 	l.Empty = "no episodes"
 	return &episodeScreen{
@@ -351,7 +352,7 @@ func (s *episodeScreen) Init() tea.Cmd {
 	return tea.Batch(
 		s.busy.start("loading episodes…"),
 		func() tea.Msg {
-			return episodesMsg{id: id, eps: GetSeasonEpisodes(m, season, sm, ctx.cfg.OmdbKey)}
+			return episodesMsg{id: id, eps: stremio.GetSeasonEpisodes(m, season, sm, ctx.cfg.OmdbKey)}
 		},
 	)
 }

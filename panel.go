@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
 
@@ -44,10 +45,10 @@ type continuePanel struct {
 	items     []ContinueItem
 	downloads []Download
 	watched   []HistoryEntry
-	next      *ContinueItem // what w resumes
-	epVideo   Video         // episode record, for a series
-	epMovie   MetaDetail    // meta, for a film
-	epKey     string        // which target the two above belong to
+	next      *ContinueItem      // what w resumes
+	epVideo   stremio.Video      // episode record, for a series
+	epMovie   stremio.MetaDetail // meta, for a film
+	epKey     string             // which target the two above belong to
 	stats     Stats
 
 	// actions is the flat numbered list across all sections, so 1-9 means one
@@ -158,15 +159,15 @@ func FetchTargetInfo(e HistoryEntry) tea.Cmd {
 
 		// A film has no episode to look up; it's the meta object itself.
 		if isFilmEntry(e) {
-			d, ok := GetMetaDetail(ctx.Addons(), "movie", e.ID, "")
+			d, ok := stremio.GetMetaDetail(ctx.Addons(), "movie", e.ID, "")
 			if !ok {
 				return targetInfoMsg{}
 			}
 			return targetInfoMsg{Key: targetKey(e), Detail: d}
 		}
 
-		m := Meta{ID: e.ID, Type: e.Type, Name: e.Name, Source: e.Source, Base: e.Base}
-		for _, v := range GetSeriesMeta(ctx.Addons(), m).Videos {
+		m := stremio.Meta{ID: e.ID, Type: e.Type, Name: e.Name, Source: e.Source, Base: e.Base}
+		for _, v := range stremio.GetSeriesMeta(ctx.Addons(), m).Videos {
 			if v.ID == e.VideoID || (v.Season == e.Season && v.Episode == e.Episode) {
 				return targetInfoMsg{Key: targetKey(e), Video: v}
 			}
@@ -177,8 +178,8 @@ func FetchTargetInfo(e HistoryEntry) tea.Cmd {
 
 type targetInfoMsg struct {
 	Key    string
-	Video  Video
-	Detail MetaDetail
+	Video  stremio.Video
+	Detail stremio.MetaDetail
 }
 
 // One line per entry, in fixed columns.
@@ -361,7 +362,7 @@ func (p *continuePanel) episodeBlock(e HistoryEntry, budget int) []string {
 	if isFilmEntry(e) {
 		d := p.epMovie
 		if p.epKey != targetKey(e) {
-			d = MetaDetail{} // fetch hasn't landed, or is for something else
+			d = stremio.MetaDetail{} // fetch hasn't landed, or is for something else
 		}
 
 		name := e.Name

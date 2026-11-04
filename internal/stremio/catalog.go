@@ -1,4 +1,4 @@
-package main
+package stremio
 
 import (
 	"fmt"
@@ -23,7 +23,7 @@ var (
 	// length of the show: a season of something is tens of kilobytes, a
 	// thousand-episode anime is closer to half a megabyte. Bounded by both,
 	// since neither number alone describes the memory.
-	cacheSeries = cache.NewSized(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
+	CacheSeries = cache.NewSized(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
 		n := len(sm.Name) + len(sm.Poster)
 		for _, v := range sm.Videos {
 			n += len(v.Title) + len(v.Overview) + len(v.ID) + len(v.Thumbnail) + 64
@@ -177,7 +177,7 @@ func FetchCatalog(ref CatalogRef, skip int, genre string) ([]Meta, bool, error) 
 	}
 
 	var resp catalogResponse
-	if err := getJSON(u, &resp); err != nil {
+	if err := GetJSON(u, &resp); err != nil {
 		return nil, false, err
 	}
 
@@ -261,7 +261,7 @@ func Search(addons []Addon, query string) []Meta {
 				ref.Base, ref.Type, url.PathEscape(ref.ID), url.QueryEscape(q))
 
 			var resp catalogResponse
-			if getJSON(u, &resp) != nil {
+			if GetJSON(u, &resp) != nil {
 				return
 			}
 			src := sourceOf(ref.Type)
@@ -377,14 +377,14 @@ type metaFlightCall struct {
 // GetMetaDetail fetches the full meta object for one title, asking whichever
 // addons declare a meta resource for that id.
 func GetMetaDetail(addons []Addon, mediaType, id, hint string) (MetaDetail, bool) {
-	return fetchMetaDetail(addons, mediaType, id, hint, true)
+	return FetchMetaDetail(addons, mediaType, id, hint, true)
 }
 
 // fetchMetaDetail resolves a meta detail, joining an in-flight request for the
 // same id. negative controls whether a total miss is remembered: prefetch
 // passes false, so a transient failure on a row the user hasn't reached yet
 // isn't cached and doesn't block a real attempt later.
-func fetchMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (MetaDetail, bool) {
+func FetchMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (MetaDetail, bool) {
 	key := mediaType + ":" + id
 	if v, ok := cacheMetaDetail.Get(key); ok {
 		return v, v.ID != ""
@@ -434,7 +434,7 @@ func getMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (M
 				Meta MetaDetail `json:"meta"`
 			}
 			u := fmt.Sprintf("%s/meta/%s/%s.json", base, mediaType, url.PathEscape(id))
-			if getJSON(u, &resp) != nil || resp.Meta.Name == "" {
+			if GetJSON(u, &resp) != nil || resp.Meta.Name == "" {
 				continue
 			}
 
@@ -473,7 +473,7 @@ func getMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (M
 // GetSeriesMeta fetches the episode list, asking each capable addon in turn
 // rather than guessing between Cinemeta and Kitsu based on a source tag.
 func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
-	if v, ok := cacheSeries.Get(m.ID); ok {
+	if v, ok := CacheSeries.Get(m.ID); ok {
 		return v
 	}
 
@@ -482,7 +482,7 @@ func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
 			Meta SeriesMeta `json:"meta"`
 		}
 		u := fmt.Sprintf("%s/meta/series/%s.json", base, url.PathEscape(m.ID))
-		if getJSON(u, &resp) != nil || len(resp.Meta.Videos) == 0 {
+		if GetJSON(u, &resp) != nil || len(resp.Meta.Videos) == 0 {
 			continue
 		}
 		for i, v := range resp.Meta.Videos {
@@ -499,7 +499,7 @@ func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
 				Meta SeriesMeta `json:"meta"`
 			}
 			fu := fmt.Sprintf("%s/meta/series/%s.json", base, url.PathEscape(id))
-			if getJSON(fu, &full) == nil && len(full.Meta.Videos) > len(resp.Meta.Videos) {
+			if GetJSON(fu, &full) == nil && len(full.Meta.Videos) > len(resp.Meta.Videos) {
 				for i, v := range full.Meta.Videos {
 					full.Meta.Videos[i] = v.fill()
 				}
@@ -510,14 +510,14 @@ func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
 				// unrelated shorts in one list. Kitsu already keeps them as
 				// separate titles, which is the more useful shape, so those
 				// keep their own episodes and don't merge.
-				if n, ok := full.Meta.SeasonOf(kitsuIDOf(m.ID)); ok && n > 0 {
-					cacheSeries.Set(m.ID, full.Meta)
+				if n, ok := full.Meta.SeasonOf(KitsuIDOf(m.ID)); ok && n > 0 {
+					CacheSeries.Set(m.ID, full.Meta)
 					return full.Meta
 				}
 			}
 		}
 
-		cacheSeries.Set(m.ID, resp.Meta)
+		CacheSeries.Set(m.ID, resp.Meta)
 		return resp.Meta
 	}
 
@@ -546,7 +546,7 @@ func GetSeasonEpisodes(m Meta, season int, sm SeriesMeta, omdbKey string) []Vide
 			} `json:"Episodes"`
 		}
 		u := fmt.Sprintf("%s/?i=%s&Season=%d&apikey=%s", urlOMDB, m.ID, season, omdbKey)
-		if getJSON(u, &resp) == nil {
+		if GetJSON(u, &resp) == nil {
 			for _, e := range resp.Episodes {
 				n := 0
 				fmt.Sscanf(e.Episode, "%d", &n)
@@ -571,4 +571,12 @@ func GetSeasonEpisodes(m Meta, season int, sm SeriesMeta, omdbKey string) []Vide
 	}
 	sort.Slice(eps, func(i, j int) bool { return eps[i].Episode < eps[j].Episode })
 	return eps
+}
+
+// KitsuIDOf pulls the numeric id out of a kitsu meta id, or returns "".
+func KitsuIDOf(id string) string {
+	if !strings.HasPrefix(id, "kitsu:") {
+		return ""
+	}
+	return strings.TrimPrefix(id, "kitsu:")
 }

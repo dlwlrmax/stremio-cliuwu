@@ -1,4 +1,4 @@
-package main
+package stremio
 
 import (
 	"fmt"
@@ -35,13 +35,13 @@ type Subtitle struct {
 	Rank  int    // injected: the addon's position in your list
 }
 
-var cacheSubs = cache.New[[]Subtitle](10*time.Minute, 60)
+var CacheSubs = cache.New[[]Subtitle](10*time.Minute, 60)
 
 // cacheSubsMiss remembers "nothing found" for a much shorter time. Never
 // caching it meant every keystroke in the picker re-asked every addon; caching
 // it for the full ten minutes meant fixing a broken addon looked like it had
 // done nothing.
-var cacheSubsMiss = cache.New[[]Subtitle](60*time.Second, 60)
+var CacheSubsMiss = cache.New[[]Subtitle](60*time.Second, 60)
 
 // SubtitleAddons are the installed addons offering subtitles for this item.
 // Reuses the same resource check as streams and meta, so idPrefixes and
@@ -71,18 +71,6 @@ type SubsQuery struct {
 	Filename string
 }
 
-// SubsQueryFrom builds the subtitle request for a play request, so the picker
-// and the autoloader ask for the same exact file.
-func SubsQueryFrom(req *PlayRequest) SubsQuery {
-	return SubsQuery{
-		MediaType: req.MediaType,
-		VideoID:   req.VideoID,
-		Hash:      req.VideoHash,
-		Size:      req.VideoSize,
-		Filename:  req.Filename,
-	}
-}
-
 // subsCacheKey identifies a subtitle request for the cache. Filename belongs
 // in it: two releases of the same episode hash differently, and without it a
 // refetch after switching streams would hand back the old file's list.
@@ -102,7 +90,7 @@ var (
 
 // dropSubsCache forgets a hit and a miss for q, so the next request goes back
 // out to the addons.
-func dropSubsCache(q SubsQuery) {
+func DropSubsCache(q SubsQuery) {
 	base := subsCacheKey(q)
 	subsFullKeyMu.Lock()
 	key, ok := subsFullKey[base]
@@ -111,8 +99,8 @@ func dropSubsCache(q SubsQuery) {
 	if !ok {
 		key = base
 	}
-	cacheSubs.Delete(key)
-	cacheSubsMiss.Delete(key)
+	CacheSubs.Delete(key)
+	CacheSubsMiss.Delete(key)
 }
 
 // paths are the endpoints worth asking, best first.
@@ -199,10 +187,10 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 		subsFullKey[base] = key
 		subsFullKeyMu.Unlock()
 	}
-	if v, ok := cacheSubs.Get(key); ok {
+	if v, ok := CacheSubs.Get(key); ok {
 		return v
 	}
-	if v, ok := cacheSubsMiss.Get(key); ok {
+	if v, ok := CacheSubsMiss.Get(key); ok {
 		return v
 	}
 
@@ -267,7 +255,7 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 					var resp struct {
 						Subtitles []Subtitle `json:"subtitles"`
 					}
-					if getJSON(root+path, &resp) != nil {
+					if GetJSON(root+path, &resp) != nil {
 						return
 					}
 					sets[pi] = resp.Subtitles
@@ -305,9 +293,9 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 	// which orders by their preference. Sorting here would bake whatever
 	// preference happened to be set at fetch time into the shared cache.
 	if len(out) > 0 {
-		cacheSubs.Set(key, out)
+		CacheSubs.Set(key, out)
 	} else {
-		cacheSubsMiss.Set(key, out)
+		CacheSubsMiss.Set(key, out)
 	}
 	return out
 }

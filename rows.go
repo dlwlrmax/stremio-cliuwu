@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
 )
@@ -13,7 +14,7 @@ import (
 // the styling layer to produce ANSI. Wrong direction, and the thing that would
 // block ever splitting this into packages.
 
-func metaItem(m Meta) Item {
+func metaItem(m stremio.Meta) Item {
 	if m.Name == "" {
 		m.Name = m.ID // some debrid catalogs omit names entirely
 	}
@@ -28,7 +29,7 @@ func metaItem(m Meta) Item {
 	}
 }
 
-func epItem(v Video, watched bool) Item {
+func epItem(v stremio.Video, watched bool) Item {
 	badge := ""
 	if r := fmtRelease(v.Released); r != "" {
 		badge = grey(r)
@@ -165,8 +166,8 @@ func FavItem(f Favourite, recent []HistoryEntry) Item {
 }
 
 // AddonItem renders an addon row for the addons screen.
-func AddonItem(ref AddonRef, a *Addon) Item {
-	name := RedactURL(ref.URL)
+func AddonItem(ref stremio.AddonRef, a *stremio.Addon) Item {
+	name := stremio.RedactURL(ref.URL)
 	sub := ""
 	badge := ""
 
@@ -175,7 +176,7 @@ func AddonItem(ref AddonRef, a *Addon) Item {
 		badge = grey("…")
 	case a.Err != nil:
 		badge = bad("failed")
-		sub = RedactErr(a.Err)
+		sub = stremio.RedactErr(a.Err)
 	default:
 		name = a.Manifest.Name
 		var caps []string

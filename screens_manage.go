@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,7 +65,7 @@ func (s *favsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "enter":
 			if i := s.list.Selected(); i >= 0 {
 				f := s.favs[i]
-				m := Meta{ID: f.ID, Type: f.Type, Name: f.Name, Year: f.Year, Source: f.Source, Base: f.Base}
+				m := stremio.Meta{ID: f.ID, Type: f.Type, Name: f.Name, Year: f.Year, Source: f.Source, Base: f.Base}
 				return s, push(openMeta(m, func() int {
 					// A favourited show has season 0 meaning "the whole
 					// thing", not the specials season.
@@ -190,7 +191,7 @@ func (s *historyScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 					return s, nil
 				}
 				sh := s.shows[i]
-				return s, push(openMeta(Meta{
+				return s, push(openMeta(stremio.Meta{
 					ID: sh.ID, Type: sh.Type, Name: sh.Name,
 					Year: sh.Year, Source: sh.Source, Base: sh.Base,
 				}, noSeason))
@@ -254,15 +255,15 @@ func (s *historyScreen) View() string { return s.list.View() }
 
 type addonsLoadedMsg struct {
 	id     asyncID
-	addons []Addon
+	addons []stremio.Addon
 }
 
 type addonsScreen struct {
 	baseScreen
 	id     asyncID
 	list   listModel
-	refs   []AddonRef
-	live   map[string]*Addon
+	refs   []stremio.AddonRef
+	live   map[string]*stremio.Addon
 	busy   busy
 	loaded bool
 }
@@ -270,7 +271,7 @@ type addonsScreen struct {
 func newAddonsScreen() *addonsScreen {
 	l := newList()
 	l.Empty = "no addons — press a and paste a manifest url"
-	s := &addonsScreen{list: l, live: map[string]*Addon{}, busy: newBusy("fetching manifests…")}
+	s := &addonsScreen{list: l, live: map[string]*stremio.Addon{}, busy: newBusy("fetching manifests…")}
 	s.rebuild()
 	return s
 }
@@ -281,16 +282,16 @@ func (s *addonsScreen) refresh() tea.Cmd {
 	s.id = newAsyncID()
 	s.loaded = false
 	id := s.id
-	refs := LoadAddonRefs()
+	refs := stremio.LoadAddonRefs()
 	return tea.Batch(
 		s.busy.start("fetching manifests…"),
 		func() tea.Msg {
 			// Fetch everything, disabled included, so the list can show names.
-			all := AddonList{}
+			all := stremio.AddonList{}
 			for _, r := range refs.Items {
-				all.Items = append(all.Items, AddonRef{URL: r.URL})
+				all.Items = append(all.Items, stremio.AddonRef{URL: r.URL})
 			}
-			return addonsLoadedMsg{id: id, addons: LoadAddons(all)}
+			return addonsLoadedMsg{id: id, addons: stremio.LoadAddons(all)}
 		},
 	)
 }
@@ -315,7 +316,7 @@ func (s *addonsScreen) Footer() string {
 }
 
 func (s *addonsScreen) rebuild() {
-	s.refs = LoadAddonRefs().Items
+	s.refs = stremio.LoadAddonRefs().Items
 	items := make([]Item, len(s.refs))
 	for i, r := range s.refs {
 		items[i] = AddonItem(r, s.live[r.URL])
@@ -354,12 +355,12 @@ func (s *addonsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				if v == "" {
 					return nil
 				}
-				u, err := AddAddonRef(v)
+				u, err := stremio.AddAddonRef(v)
 				if err != nil {
 					return toastErr(err.Error())
 				}
 				s.rebuild()
-				return tea.Batch(toast("added "+RedactURL(u)), s.refresh())
+				return tea.Batch(toast("added "+stremio.RedactURL(u)), s.refresh())
 			},
 				"paste the same manifest url you'd paste into stremio",
 				"stremio:// links and trailing-slash urls are fine too",
@@ -368,9 +369,9 @@ func (s *addonsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		case "d":
 			if i := s.list.Selected(); i >= 0 {
 				url := s.refs[i].URL
-				return s, push(newDestructive("remove addon", "remove "+RedactURL(url)+"?", "remove",
+				return s, push(newDestructive("remove addon", "remove "+stremio.RedactURL(url)+"?", "remove",
 					func() tea.Cmd {
-						RemoveAddonRef(i)
+						stremio.RemoveAddonRef(i)
 						s.rebuild()
 						return tea.Batch(toast("removed"), s.commit())
 					}))
@@ -378,7 +379,7 @@ func (s *addonsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case "t":
 			if i := s.list.Selected(); i >= 0 {
-				ToggleAddonRef(i)
+				stremio.ToggleAddonRef(i)
 				s.rebuild()
 				s.list.Focus(i)
 				return s, s.commit()
@@ -386,7 +387,7 @@ func (s *addonsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case "K":
 			if i := s.list.Selected(); i >= 0 {
-				j := MoveAddonRef(i, -1)
+				j := stremio.MoveAddonRef(i, -1)
 				s.rebuild()
 				s.list.Focus(j)
 				return s, s.commit()
@@ -394,7 +395,7 @@ func (s *addonsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case "J":
 			if i := s.list.Selected(); i >= 0 {
-				j := MoveAddonRef(i, 1)
+				j := stremio.MoveAddonRef(i, 1)
 				s.rebuild()
 				s.list.Focus(j)
 				return s, s.commit()

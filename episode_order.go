@@ -1,6 +1,9 @@
 package main
 
-import "sort"
+import (
+	"sort"
+	"stremio-cliuwu/internal/stremio"
+)
 
 // ── Index space ───────────────────────────────────────────────────────────────
 
@@ -17,7 +20,7 @@ func orderedEpisodes(showID string, sh *showState) [][2]int {
 }
 
 func epsFromMeta(showID string) [][2]int {
-	sm, ok := cacheSeries.Get(showID)
+	sm, ok := stremio.CacheSeries.Get(showID)
 	if !ok {
 		return nil
 	}

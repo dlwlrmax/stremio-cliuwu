@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 type streamsMsg struct {
 	id      asyncID
-	streams []Stream
+	streams []stremio.Stream
 }
 
 // streamsRetryMsg fires after the auto-retry delay for an empty result. It
@@ -30,7 +31,7 @@ const (
 
 // streamTarget is everything needed to fetch streams for one playable thing.
 type streamTarget struct {
-	Meta      Meta
+	Meta      stremio.Meta
 	MediaType string
 	VideoID   string // identity: history, resume, favourites
 	StreamID  string // what stream addons are asked for; VideoID when empty
@@ -44,7 +45,7 @@ type streamScreen struct {
 	id     asyncID
 	target streamTarget
 
-	streams []Stream
+	streams []stremio.Stream
 	shown   []int // indices into streams after the provider filter
 
 	providers []string // "all" plus one entry per addon that returned results
@@ -106,7 +107,7 @@ func (s *streamScreen) Init() tea.Cmd { return s.load() }
 // reload drops the cached stream list first — used when a link turns out to be
 // dead, which for debrid results usually means the URL simply expired.
 func (s *streamScreen) reload() tea.Cmd {
-	InvalidateStreams(s.target.fetchID())
+	stremio.InvalidateStreams(s.target.fetchID())
 	return s.load()
 }
 
@@ -119,7 +120,7 @@ func (s *streamScreen) load() tea.Cmd {
 	return tea.Batch(
 		s.busy.start("fetching streams…"),
 		func() tea.Msg {
-			return streamsMsg{id: id, streams: GetStreams(addons, mt, vid)}
+			return streamsMsg{id: id, streams: stremio.GetStreams(addons, mt, vid)}
 		},
 	)
 }
@@ -429,7 +430,7 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 // request builds the play request for a stream. Shared by launch and queue so
 // the two can't drift — a queued episode has to record exactly the same
 // history and episode context as one played directly.
-func (s *streamScreen) request(st Stream, resume float64) PlayRequest {
+func (s *streamScreen) request(st stremio.Stream, resume float64) PlayRequest {
 	t := s.target
 
 	entry := HistoryEntry{
@@ -478,13 +479,13 @@ func (s *streamScreen) request(st Stream, resume float64) PlayRequest {
 }
 
 // launch starts playback at an explicit position.
-func (s *streamScreen) launch(st Stream, resume float64) tea.Cmd {
+func (s *streamScreen) launch(st stremio.Stream, resume float64) tea.Cmd {
 	return ctx.player.Play(s.request(st, resume))
 }
 
 // queue lines a stream up to follow whatever is playing. Pressing n again on
 // the same stream takes it back off.
-func (s *streamScreen) queue(st Stream) tea.Cmd {
+func (s *streamScreen) queue(st stremio.Stream) tea.Cmd {
 	if !ctx.player.State().Alive {
 		return toastErr("nothing is playing to queue behind")
 	}
@@ -506,7 +507,7 @@ func (s *streamScreen) queue(st Stream) tea.Cmd {
 
 // play asks before seeking. Silently jumping into the middle of something is
 // the wrong default — often enough you want to start it over.
-func (s *streamScreen) play(st Stream) tea.Cmd {
+func (s *streamScreen) play(st stremio.Stream) tea.Cmd {
 	resume := s.target.Resume
 	if !ctx.cfg.AutoResume || resume <= 5 {
 		return tea.Batch(s.launch(st, 0), toast("loading "+s.target.Label+"…"))
@@ -526,7 +527,7 @@ func (s *streamScreen) play(st Stream) tea.Cmd {
 }
 
 // download queues the selected stream to disk.
-func (s *streamScreen) download(st Stream) tea.Cmd {
+func (s *streamScreen) download(st stremio.Stream) tea.Cmd {
 	if ctx.cfg.DownloadDir == "" {
 		return toastErr("set a download location in settings first")
 	}
@@ -609,7 +610,7 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.busy.stop()
 		s.loaded = true
 
-		var playable []Stream
+		var playable []stremio.Stream
 		for _, st := range m.streams {
 			if st.URL != "" {
 				playable = append(playable, st)

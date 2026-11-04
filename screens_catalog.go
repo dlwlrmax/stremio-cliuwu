@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync/atomic"
 
@@ -16,7 +17,7 @@ import (
 type catalogPickerScreen struct {
 	baseScreen
 	kind  string
-	refs  []CatalogRef
+	refs  []stremio.CatalogRef
 	list  listModel
 	title string
 }
@@ -44,7 +45,7 @@ func (s *catalogPickerScreen) Footer() string {
 }
 
 func (s *catalogPickerScreen) rebuild() {
-	all := CatalogsOfKind(ctx.Addons(), s.kind)
+	all := stremio.CatalogsOfKind(ctx.Addons(), s.kind)
 
 	// Group by addon, with a section label per addon, but only when more than
 	// one addon contributes — otherwise the header is just noise.
@@ -69,10 +70,10 @@ func (s *catalogPickerScreen) rebuild() {
 			// empty name would otherwise swallow the first header entirely.
 			if groups > 0 {
 				items = append(items, Item{Header: true})
-				s.refs = append(s.refs, CatalogRef{})
+				s.refs = append(s.refs, stremio.CatalogRef{})
 			}
 			items = append(items, Item{Header: true, Label: c.AddonName})
-			s.refs = append(s.refs, CatalogRef{})
+			s.refs = append(s.refs, stremio.CatalogRef{})
 			last = c.AddonName
 			groups++
 		}
@@ -111,13 +112,13 @@ func (s *catalogPickerScreen) View() string { return s.list.View() }
 
 type genrePickerScreen struct {
 	baseScreen
-	ref    CatalogRef
+	ref    stremio.CatalogRef
 	genres []string // "" first when the catalog can be browsed unfiltered
 	list   listModel
 	onPick func(string) tea.Cmd
 }
 
-func newGenrePicker(ref CatalogRef, onPick func(string) tea.Cmd) *genrePickerScreen {
+func newGenrePicker(ref stremio.CatalogRef, onPick func(string) tea.Cmd) *genrePickerScreen {
 	l := newList()
 	l.Empty = "this catalog declares no genres"
 
@@ -180,7 +181,7 @@ func (s *genrePickerScreen) View() string { return s.list.View() }
 
 type catalogPageMsg struct {
 	id      asyncID
-	metas   []Meta
+	metas   []stremio.Meta
 	hasMore bool
 	err     error
 }
@@ -188,9 +189,9 @@ type catalogPageMsg struct {
 type catalogScreen struct {
 	baseScreen
 	id      asyncID
-	ref     CatalogRef
+	ref     stremio.CatalogRef
 	genre   string // "" = every genre
-	metas   []Meta
+	metas   []stremio.Meta
 	hasMore bool
 
 	list        listModel
@@ -208,7 +209,7 @@ type catalogScreen struct {
 	prefetching atomic.Bool
 }
 
-func newCatalogScreen(ref CatalogRef) *catalogScreen {
+func newCatalogScreen(ref stremio.CatalogRef) *catalogScreen {
 	l := newList()
 	l.Empty = "empty catalog"
 	return &catalogScreen{
@@ -250,7 +251,7 @@ func (s *catalogScreen) prefetchPosters() tea.Cmd {
 	if !s.info.On() || ctx == nil {
 		return nil
 	}
-	var metas []Meta
+	var metas []stremio.Meta
 	for _, ai := range s.list.ViewAfter(prefetchK) {
 		if s.moreRow(ai) {
 			continue
@@ -265,7 +266,7 @@ func (s *catalogScreen) prefetchPosters() tea.Cmd {
 // is already in flight — cursor moves during one are dropped rather than
 // piling up work. The command returns a nil message, so nothing it does ever
 // reaches the update loop.
-func prefetchCmd(flag *atomic.Bool, addons []Addon, metas []Meta, posterSize string, paneW, paneH int, kitty, posters bool) tea.Cmd {
+func prefetchCmd(flag *atomic.Bool, addons []stremio.Addon, metas []stremio.Meta, posterSize string, paneW, paneH int, kitty, posters bool) tea.Cmd {
 	if flag == nil || !flag.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -283,7 +284,7 @@ func prefetchCmd(flag *atomic.Bool, addons []Addon, metas []Meta, posterSize str
 // warmPosters fetches each title's detail in order, nearest first, and warms
 // its poster cache: bytes and dimensions for the kitty placeholder path, or
 // the rendered half-block art otherwise. It deliberately emits nothing.
-func warmPosters(addons []Addon, metas []Meta, posterSize string, paneW, paneH int, kitty, posters bool) {
+func warmPosters(addons []stremio.Addon, metas []stremio.Meta, posterSize string, paneW, paneH int, kitty, posters bool) {
 	maxW, maxH := posterBudget(posterSize, paneW, paneH)
 	for _, m := range metas {
 		if m.ID == "" {
@@ -294,7 +295,7 @@ func warmPosters(addons []Addon, metas []Meta, posterSize string, paneW, paneH i
 			mediaType = "movie"
 		}
 		// negative=false: a prefetch miss must not poison the detail cache.
-		d, ok := fetchMetaDetail(addons, mediaType, m.ID, m.Base, false)
+		d, ok := stremio.FetchMetaDetail(addons, mediaType, m.ID, m.Base, false)
 		if !ok || !posters || d.Poster == "" {
 			continue
 		}
@@ -345,7 +346,7 @@ func (s *catalogScreen) loadPage(skip int) tea.Cmd {
 	return tea.Batch(
 		s.busy.start("loading "+what+"…"),
 		func() tea.Msg {
-			metas, more, err := FetchCatalog(ref, skip, genre)
+			metas, more, err := stremio.FetchCatalog(ref, skip, genre)
 			return catalogPageMsg{id: id, metas: metas, hasMore: more, err: err}
 		},
 	)
@@ -546,14 +547,14 @@ func (s *catalogScreen) View() string {
 
 type searchMsg struct {
 	id    asyncID
-	metas []Meta
+	metas []stremio.Meta
 }
 
 type searchScreen struct {
 	baseScreen
 	id    asyncID
 	query string
-	metas []Meta
+	metas []stremio.Meta
 	shown []int // indices into metas after the category filter
 
 	cats   []string // "all" plus each category present in the results
@@ -613,7 +614,7 @@ func (s *searchScreen) prefetchPosters() tea.Cmd {
 	if !s.info.On() || ctx == nil {
 		return nil
 	}
-	var metas []Meta
+	var metas []stremio.Meta
 	for _, ai := range s.list.ViewAfter(prefetchK) {
 		if ai >= len(s.shown) {
 			continue
@@ -629,7 +630,7 @@ func (s *searchScreen) Init() tea.Cmd {
 	addons := ctx.Addons()
 	return tea.Batch(
 		s.busy.start("searching…"),
-		func() tea.Msg { return searchMsg{id: id, metas: Search(addons, q)} },
+		func() tea.Msg { return searchMsg{id: id, metas: stremio.Search(addons, q)} },
 	)
 }
 
@@ -803,7 +804,7 @@ func (s *searchScreen) View() string {
 	if !s.loaded {
 		return s.busy.view()
 	}
-	n := len(SearchCatalogs(ctx.Addons()))
+	n := len(stremio.SearchCatalogs(ctx.Addons()))
 	out := "  " + stSub.Render(fmt.Sprintf("%q across %d searchable catalog(s)", s.query, n)) + "\n"
 	if bar := s.catBar(); bar != "" {
 		out += bar + "\n"
@@ -815,7 +816,7 @@ func (s *searchScreen) View() string {
 }
 
 func searchPrompt() *promptScreen {
-	n := len(SearchCatalogs(ctx.Addons()))
+	n := len(stremio.SearchCatalogs(ctx.Addons()))
 	help := fmt.Sprintf("queries %d searchable catalog(s) from your addons", n)
 	if n == 0 {
 		help = "none of your addons expose a searchable catalog"
@@ -831,7 +832,7 @@ func searchPrompt() *promptScreen {
 // ── Shared ────────────────────────────────────────────────────────────────────
 
 // openMeta picks the right next screen for a title.
-func openMeta(m Meta, season int) screen {
+func openMeta(m stremio.Meta, season int) screen {
 	switch m.Type {
 	case "movie":
 		return newStreamScreen(streamTarget{
@@ -851,7 +852,7 @@ func openMeta(m Meta, season int) screen {
 // browseKind opens the catalogs for a menu bucket, skipping the picker when
 // there's only one catalog to pick.
 func browseKind(kind, title string) tea.Cmd {
-	refs := CatalogsOfKind(ctx.Addons(), kind)
+	refs := stremio.CatalogsOfKind(ctx.Addons(), kind)
 	switch len(refs) {
 	case 0:
 		return toastErr("no " + title + " catalogs — check your addons")

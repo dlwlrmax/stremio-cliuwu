@@ -1,4 +1,4 @@
-package main
+package stremio
 
 import (
 	"bufio"
@@ -20,7 +20,7 @@ const (
 	urlOMDB     = "https://www.omdbapi.com"
 )
 
-var httpClient = &http.Client{
+var HttpClient = &http.Client{
 	Timeout: 15 * time.Second,
 	Transport: &http.Transport{
 		DialContext: (&net.Dialer{
@@ -33,14 +33,14 @@ var httpClient = &http.Client{
 	},
 }
 
-func getJSON(u string, out any) error { return getJSONTimeout(u, out, 0) }
+func GetJSON(u string, out any) error { return GetJSONTimeout(u, out, 0) }
 
 // getJSONTimeout is getJSON with a deadline of its own.
 //
 // A manifest is a few hundred bytes and either answers quickly or isn't
 // coming. Letting it use the full fifteen second client timeout meant one
 // unresponsive addon delayed everything waiting on the set.
-func getJSONTimeout(u string, out any, timeout time.Duration) error {
+func GetJSONTimeout(u string, out any, timeout time.Duration) error {
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ func getJSONTimeout(u string, out any, timeout time.Duration) error {
 		req = req.WithContext(c)
 	}
 
-	r, err := httpClient.Do(req)
+	r, err := HttpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -96,12 +96,12 @@ func getJSONTimeout(u string, out any, timeout time.Duration) error {
 
 // Debrid providers hand out time-limited URLs, so this TTL is deliberately
 // short. InvalidateStreams drops an entry when a stream fails to open.
-var cacheStreams = cache.New[[]Stream](5*time.Minute, 100)
+var CacheStreams = cache.New[[]Stream](5*time.Minute, 100)
 
-func InvalidateStreams(videoID string) { cacheStreams.Delete(videoID) }
+func InvalidateStreams(videoID string) { CacheStreams.Delete(videoID) }
 
 func GetStreams(addons []Addon, mediaType, videoID string) []Stream {
-	if v, ok := cacheStreams.Get(videoID); ok {
+	if v, ok := CacheStreams.Get(videoID); ok {
 		return v
 	}
 
@@ -134,7 +134,7 @@ func GetStreams(addons []Addon, mediaType, videoID string) []Stream {
 			var resp struct {
 				Streams []Stream `json:"streams"`
 			}
-			if getJSON(u, &resp) != nil {
+			if GetJSON(u, &resp) != nil {
 				return
 			}
 			for j := range resp.Streams {
@@ -150,6 +150,6 @@ func GetStreams(addons []Addon, mediaType, videoID string) []Stream {
 	for _, r := range results {
 		all = append(all, r...)
 	}
-	cacheStreams.Set(videoID, all)
+	CacheStreams.Set(videoID, all)
 	return all
 }

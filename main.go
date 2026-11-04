@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
 	"syscall"
@@ -104,13 +105,13 @@ func main() {
 
 	// First run: no addons.json yet, so seed the two metadata addons. Stream
 	// addons are the user's to add — there's no account to pull them from.
-	refs := LoadAddonRefs()
+	refs := stremio.LoadAddonRefs()
 	LoadSubPrefs()
 	LoadBingePrefs()
 	firstRun := false
 	if len(refs.Items) == 0 {
 		if _, err := os.Stat(paths.AddonsFile()); os.IsNotExist(err) {
-			refs = SeedAddons()
+			refs = stremio.SeedAddons()
 			firstRun = true
 		}
 	}
@@ -143,7 +144,7 @@ func main() {
 	// The call has to sit inside the closure: arguments of a bare
 	// `go f(g())` are evaluated by the caller, which would run LoadAddons on
 	// this goroutine before the program ever started.
-	go func() { prog.Send(addonsReadyMsg{Addons: LoadAddons(refs)}) }()
+	go func() { prog.Send(addonsReadyMsg{Addons: stremio.LoadAddons(refs)}) }()
 
 	// Index only — no folder walk at startup. R on the downloads screen
 	// rescans when the index and the disk have drifted apart.

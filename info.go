@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,7 +18,7 @@ import (
 type metaDetailMsg struct {
 	id     asyncID
 	metaID string
-	detail MetaDetail
+	detail stremio.MetaDetail
 	ok     bool
 }
 
@@ -33,7 +34,7 @@ type infoPane struct {
 
 	id     asyncID
 	forID  string // meta id currently shown or loading
-	detail MetaDetail
+	detail stremio.MetaDetail
 	loaded bool
 	busy   busy
 
@@ -51,7 +52,7 @@ type infoPane struct {
 
 	// Episode mode: rendered straight from the season's video list, which
 	// GetSeriesMeta already fetched. No request, no cache, no async.
-	ep     *Video
+	ep     *stremio.Video
 	epShow string
 
 	full     bool // taking over the whole screen rather than sitting beside
@@ -122,7 +123,7 @@ func PaneWidth(total int) int {
 func (p *infoPane) Split(total int) bool { return PaneWidth(total) > 0 }
 
 // Show loads meta for a title, if it isn't already showing.
-func (p *infoPane) Show(m Meta) tea.Cmd {
+func (p *infoPane) Show(m stremio.Meta) tea.Cmd {
 	if !p.on || m.ID == "" {
 		return nil
 	}
@@ -135,7 +136,7 @@ func (p *infoPane) Show(m Meta) tea.Cmd {
 
 	p.forID = m.ID
 	p.loaded = false
-	p.detail = MetaDetail{}
+	p.detail = stremio.MetaDetail{}
 	p.ep = nil
 	p.poster = ""
 	p.offset = 0
@@ -162,7 +163,7 @@ func (p *infoPane) Show(m Meta) tea.Cmd {
 		drop,
 		p.busy.start("loading…"),
 		func() tea.Msg {
-			d, ok := GetMetaDetail(addons, mediaType, metaID, hint)
+			d, ok := stremio.GetMetaDetail(addons, mediaType, metaID, hint)
 			return metaDetailMsg{id: id, metaID: metaID, detail: d, ok: ok}
 		},
 	)
@@ -170,7 +171,7 @@ func (p *infoPane) Show(m Meta) tea.Cmd {
 
 // ShowEpisode switches the panel to an episode. Everything it needs is
 // already in hand, so unlike Show there's nothing to fetch.
-func (p *infoPane) ShowEpisode(show string, v Video) tea.Cmd {
+func (p *infoPane) ShowEpisode(show string, v stremio.Video) tea.Cmd {
 	if !p.on || v.ID == "" || v.ID == p.forID {
 		return nil
 	}
@@ -179,7 +180,7 @@ func (p *infoPane) ShowEpisode(show string, v Video) tea.Cmd {
 	p.id = newAsyncID() // a metaDetailMsg still in flight for the old target is now stale
 	p.ep = &v
 	p.epShow = show
-	p.detail = MetaDetail{}
+	p.detail = stremio.MetaDetail{}
 	p.poster = ""
 	p.loaded = true
 	p.offset = 0

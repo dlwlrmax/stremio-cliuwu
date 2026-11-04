@@ -1,4 +1,4 @@
-package main
+package stremio
 
 import (
 	"fmt"
@@ -216,7 +216,7 @@ const manifestTimeout = 5 * time.Second
 
 func FetchAddon(manifestURL string) Addon {
 	a := Addon{TransportURL: manifestURL}
-	if err := getJSONTimeout(manifestURL, &a.Manifest, manifestTimeout); err != nil {
+	if err := GetJSONTimeout(manifestURL, &a.Manifest, manifestTimeout); err != nil {
 		a.Err = err
 		return a
 	}

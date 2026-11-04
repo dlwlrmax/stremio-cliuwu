@@ -3,39 +3,18 @@ package main
 import (
 	"os"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/stremio"
 	"testing"
 	"time"
 )
 
-func TestPickPreferredHonoursOrder(t *testing.T) {
-	subs := []Subtitle{{Lang: "spa", URL: "s"}, {Lang: "eng", URL: "e"}}
-	if got := PickPreferred(subs, []string{"English"}); got == nil || got.URL != "e" {
-		t.Errorf("got %+v", got)
-	}
-	if got := PickPreferred(subs, []string{"French"}); got != nil {
-		t.Errorf("no match should be nil, got %+v", got)
-	}
-}
-
-func TestMergeSubtitlesShippedFirstAndDeduped(t *testing.T) {
-	shipped := []Subtitle{{Lang: "eng", URL: "ship"}}
-	found := []Subtitle{{Lang: "eng", URL: "ship"}, {Lang: "eng", URL: "plugin", Rank: 1}, {Lang: "spa", URL: "es"}, {URL: ""}}
-	got := MergeSubtitles(shipped, found, "eng")
-	if len(got) != 3 {
-		t.Fatalf("want 3 after dedupe and dropping empty URL, got %d: %+v", len(got), got)
-	}
-	if got[0].URL != "ship" || got[1].URL != "plugin" || got[2].URL != "es" {
-		t.Errorf("order: %+v", got)
-	}
-}
-
 func TestSortStreamsAddonThenBinge(t *testing.T) {
-	mk := func(url string, rank int, group string) Stream {
-		s := Stream{URL: url, Rank: rank}
+	mk := func(url string, rank int, group string) stremio.Stream {
+		s := stremio.Stream{URL: url, Rank: rank}
 		s.BehaviorHints.BingeGroup = group
 		return s
 	}
-	in := []Stream{mk("b-other", 1, ""), mk("a-other", 0, "x"), mk("a-binge", 0, "grp"), mk("b-binge", 1, "grp")}
+	in := []stremio.Stream{mk("b-other", 1, ""), mk("a-other", 0, "x"), mk("a-binge", 0, "grp"), mk("b-binge", 1, "grp")}
 	got := SortStreams(in, "", "grp", false)
 	want := []string{"a-binge", "a-other", "b-binge", "b-other"}
 	for i, w := range want {
@@ -45,7 +24,7 @@ func TestSortStreamsAddonThenBinge(t *testing.T) {
 	}
 }
 
-func urls(ss []Stream) []string {
+func urls(ss []stremio.Stream) []string {
 	out := make([]string, len(ss))
 	for i, s := range ss {
 		out[i] = s.URL

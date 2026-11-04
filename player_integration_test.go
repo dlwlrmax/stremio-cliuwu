@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"stremio-cliuwu/internal/stremio"
 	"testing"
 	"time"
 
@@ -128,11 +129,11 @@ func (e *itEnv) loaded(t *testing.T) {
 }
 
 func seriesReq(file, show string, ep int) PlayRequest {
-	eps := []Video{{ID: show + ":1:1", Season: 1, Episode: 1}, {ID: show + ":1:2", Season: 1, Episode: 2}}
+	eps := []stremio.Video{{ID: show + ":1:1", Season: 1, Episode: 1}, {ID: show + ":1:2", Season: 1, Episode: 2}}
 	return PlayRequest{
 		VideoID: fmt.Sprintf("%s:1:%d", show, ep), MediaType: "series", Label: "t", URL: file,
 		Entry: HistoryEntry{ID: show, Name: "Show", Type: "series", Season: 1, Episode: ep, VideoID: fmt.Sprintf("%s:1:%d", show, ep)},
-		Queue: &EpQueue{Show: Meta{ID: show, Name: "Show"}, Season: 1, Episodes: eps, All: eps, Index: ep - 1},
+		Queue: &EpQueue{Show: stremio.Meta{ID: show, Name: "Show"}, Season: 1, Episodes: eps, All: eps, Index: ep - 1},
 	}
 }
 
@@ -257,9 +258,9 @@ func itFakeSubAddon(t *testing.T, lang string, delay time.Duration) {
 		time.Sleep(delay)
 		fmt.Fprintf(w, `{"subtitles":[{"id":"p1","url":%q,"lang":%q}]}`, srv.URL+"/sub.srt", lang)
 	})
-	ctx.setAddons([]Addon{{
+	ctx.setAddons([]stremio.Addon{{
 		TransportURL: srv.URL + "/manifest.json",
-		Manifest: Manifest{
+		Manifest: stremio.Manifest{
 			ID: "fake.subs", Name: "fake", Types: []string{"series"},
 			Resources: []any{"subtitles"},
 		},

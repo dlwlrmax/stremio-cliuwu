@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,7 +38,7 @@ func (v FileVideo) URL() string {
 // Offered from the catalog list as well as from inside an entry: a library
 // row is usually one whole pack, and having to open it just to press A is a
 // step for nothing. Runs off the UI goroutine — it fetches before queueing.
-func QueueEntry(m Meta) (string, bool) {
+func QueueEntry(m stremio.Meta) (string, bool) {
 	if ctx.cfg.DownloadDir == "" {
 		return "set a download location in settings first", false
 	}
@@ -80,7 +81,7 @@ func QueueEntry(m Meta) (string, bool) {
 }
 
 // FetchFiles pulls the file list for one catalog item.
-func FetchFiles(m Meta) ([]FileVideo, error) {
+func FetchFiles(m stremio.Meta) ([]FileVideo, error) {
 	base := m.Base
 	if base == "" {
 		return nil, fmt.Errorf("no addon recorded for %s", m.Name)
@@ -96,7 +97,7 @@ func FetchFiles(m Meta) ([]FileVideo, error) {
 		} `json:"meta"`
 	}
 	u := fmt.Sprintf("%s/meta/%s/%s.json", base, mediaType, url.PathEscape(m.ID))
-	if err := getJSON(u, &resp); err != nil {
+	if err := stremio.GetJSON(u, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Meta.Videos, nil
@@ -171,7 +172,7 @@ var sortNames = map[int]string{
 type fileListScreen struct {
 	baseScreen
 	id     asyncID
-	meta   Meta
+	meta   stremio.Meta
 	videos []FileVideo
 
 	rel    []string // paths with the shared prefix stripped, index-aligned
@@ -187,7 +188,7 @@ type fileListScreen struct {
 	loaded bool
 }
 
-func newFileListScreen(m Meta) *fileListScreen {
+func newFileListScreen(m stremio.Meta) *fileListScreen {
 	l := newList()
 	l.Numbered = true
 	l.Empty = "no playable files"
