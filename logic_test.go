@@ -1,33 +1,8 @@
 package main
 
 import (
-	"stremio-cliuwu/internal/stremio"
 	"testing"
 )
-
-func TestSortStreamsAddonThenBinge(t *testing.T) {
-	mk := func(url string, rank int, group string) stremio.Stream {
-		s := stremio.Stream{URL: url, Rank: rank}
-		s.BehaviorHints.BingeGroup = group
-		return s
-	}
-	in := []stremio.Stream{mk("b-other", 1, ""), mk("a-other", 0, "x"), mk("a-binge", 0, "grp"), mk("b-binge", 1, "grp")}
-	got := SortStreams(in, "", "grp", false)
-	want := []string{"a-binge", "a-other", "b-binge", "b-other"}
-	for i, w := range want {
-		if got[i].URL != w {
-			t.Fatalf("pos %d: want %s, got %s (%v)", i, w, got[i].URL, urls(got))
-		}
-	}
-}
-
-func urls(ss []stremio.Stream) []string {
-	out := make([]string, len(ss))
-	for i, s := range ss {
-		out[i] = s.URL
-	}
-	return out
-}
 
 // A hand pick in mpv's own menu is only worth remembering when it is a track
 // inside the file: external ones are what our sub-add produced, and a track

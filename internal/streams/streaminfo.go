@@ -1,4 +1,4 @@
-package main
+package streams
 
 import (
 	"regexp"
@@ -34,7 +34,7 @@ var (
 	codecNameRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(TrueHD|DTS-HD[ ._-]?MA|DTS-HD|DTS-X|DTS|E-?AC-?3|DDP|DD\+|AC-?3|AAC|FLAC|Opus|L?PCM)(?:[^a-z0-9]|$)`)
 )
 
-func resAlias(s string) string {
+func ResAlias(s string) string {
 	switch strings.ToUpper(resAliasRe.FindString(s)) {
 	case "FHD":
 		return "1080P"
@@ -46,8 +46,8 @@ func resAlias(s string) string {
 	return ""
 }
 
-// resRank orders resolutions for the resolution sort; unknown sorts last.
-func resRank(res string) int {
+// ResRank orders resolutions for the resolution sort; unknown sorts last.
+func ResRank(res string) int {
 	switch res {
 	case "4K":
 		return 6
@@ -65,10 +65,10 @@ func resRank(res string) int {
 	return 0
 }
 
-// parseSize reads a size out of free text. GB is taken as decimal and GiB
+// ParseSize reads a size out of free text. GB is taken as decimal and GiB
 // as binary, as written — addons use both.
-func parseSize(s string) int64 {
-	m := sizeRe.FindStringSubmatch(s)
+func ParseSize(s string) int64 {
+	m := SizeRe.FindStringSubmatch(s)
 	if len(m) < 3 {
 		return 0
 	}
@@ -89,7 +89,7 @@ func parseSize(s string) int64 {
 	return int64(n)
 }
 
-func extractHDR(s string) string {
+func ExtractHDR(s string) string {
 	switch {
 	case dvRe.MatchString(s):
 		return "DV"
@@ -101,8 +101,8 @@ func extractHDR(s string) string {
 	return ""
 }
 
-// extractDuration gives the runtime in seconds, or 0 if the addon didn't say.
-func extractDuration(s string) int {
+// ExtractDuration gives the runtime in seconds, or 0 if the addon didn't say.
+func ExtractDuration(s string) int {
 	m := durationRe.FindStringSubmatch(s)
 	if m == nil {
 		return 0
@@ -113,10 +113,10 @@ func extractDuration(s string) int {
 	return h*3600 + mins*60 + sec
 }
 
-// extractAudio finds the first audio format and the spoken languages.
+// ExtractAudio finds the first audio format and the spoken languages.
 // Languages only come from an addon that lists them; a release name's
 // "Dual" or "Multi" doesn't say which.
-func extractAudio(text, filename string) (codec string, langs []string) {
+func ExtractAudio(text, filename string) (codec string, langs []string) {
 	if m := codecLineRe.FindStringSubmatch(text); m != nil {
 		codec = strings.TrimSpace(m[1])
 	} else if m := codecNameRe.FindStringSubmatch(filename); m != nil {
@@ -213,21 +213,4 @@ func flagLang(cc string) string {
 		return "ES"
 	}
 	return cc
-}
-
-// fmtAudio fits the audio column: format, then the first two languages and
-// a + when there are more.
-func fmtAudio(codec string, langs []string) string {
-	out := grey(codec)
-	if len(langs) > 0 {
-		l := strings.Join(langs[:min(2, len(langs))], "/")
-		if len(langs) > 2 {
-			l += "+"
-		}
-		if out != "" {
-			out = padRight(out, 9) + " "
-		}
-		out += l
-	}
-	return out
 }

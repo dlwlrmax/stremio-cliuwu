@@ -5,6 +5,7 @@ import (
 	"sort"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/store"
+	"stremio-cliuwu/internal/streams"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"time"
@@ -302,7 +303,7 @@ func (s *streamScreen) order() []int {
 		sort.SliceStable(idx, func(i, j int) bool { return bySize(idx[i], idx[j]) })
 	case "res":
 		sort.SliceStable(idx, func(i, j int) bool {
-			ra, rb := resRank(s.infos[idx[i]].Res), resRank(s.infos[idx[j]].Res)
+			ra, rb := streams.ResRank(s.infos[idx[i]].Res), streams.ResRank(s.infos[idx[j]].Res)
 			if ra != rb {
 				return ra > rb
 			}
@@ -335,7 +336,7 @@ func (s *streamScreen) rebuild() {
 
 		// Counted rather than silently dropped. A picker that quietly shows
 		// twelve of forty results is one you stop trusting.
-		if !s.showBlocked && StreamBlocked(st, terms) {
+		if !s.showBlocked && streams.Blocked(st, terms) {
 			s.blocked++
 			continue
 		}
@@ -622,7 +623,7 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.target.MediaType == "series" {
 			binge = store.GetBinge(s.target.Meta.ID)
 		}
-		s.streams = SortStreams(playable, ctx.cfg.PreferredQuality, binge, ctx.cfg.CachedFirst)
+		s.streams = streams.Sort(playable, ctx.cfg.PreferredQuality, binge, ctx.cfg.CachedFirst)
 		s.infos = make([]streamInfo, len(s.streams))
 		for i, st := range s.streams {
 			s.infos[i] = parseStream(st)
