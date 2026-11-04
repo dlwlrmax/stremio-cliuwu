@@ -23,7 +23,7 @@ var (
 	// length of the show: a season of something is tens of kilobytes, a
 	// thousand-episode anime is closer to half a megabyte. Bounded by both,
 	// since neither number alone describes the memory.
-	CacheSeries = cache.NewSized(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
+	cacheSeries = cache.NewSized(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
 		n := len(sm.Name) + len(sm.Poster)
 		for _, v := range sm.Videos {
 			n += len(v.Title) + len(v.Overview) + len(v.ID) + len(v.Thumbnail) + 64
@@ -413,7 +413,7 @@ func FetchMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) 
 	return c.val, c.ok
 }
 
-// getMetaDetail performs the request behind fetchMetaDetail. Successes are
+// getMetaDetail performs the request behind FetchMetaDetail. Successes are
 // cached. On a total miss it stores a negative entry only when negative is
 // true, and never over a positive entry that arrived while it was fetching.
 func getMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (MetaDetail, bool) {
@@ -473,7 +473,7 @@ func getMetaDetail(addons []Addon, mediaType, id, hint string, negative bool) (M
 // GetSeriesMeta fetches the episode list, asking each capable addon in turn
 // rather than guessing between Cinemeta and Kitsu based on a source tag.
 func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
-	if v, ok := CacheSeries.Get(m.ID); ok {
+	if v, ok := cacheSeries.Get(m.ID); ok {
 		return v
 	}
 
@@ -511,13 +511,13 @@ func GetSeriesMeta(addons []Addon, m Meta) SeriesMeta {
 				// separate titles, which is the more useful shape, so those
 				// keep their own episodes and don't merge.
 				if n, ok := full.Meta.SeasonOf(KitsuIDOf(m.ID)); ok && n > 0 {
-					CacheSeries.Set(m.ID, full.Meta)
+					cacheSeries.Set(m.ID, full.Meta)
 					return full.Meta
 				}
 			}
 		}
 
-		CacheSeries.Set(m.ID, resp.Meta)
+		cacheSeries.Set(m.ID, resp.Meta)
 		return resp.Meta
 	}
 
@@ -580,3 +580,13 @@ func KitsuIDOf(id string) string {
 	}
 	return strings.TrimPrefix(id, "kitsu:")
 }
+
+// CachedSeries returns a series' metadata if it has been fetched recently. The
+// watched-state sync uses it to know the full episode order without a request.
+func CachedSeries(id string) (SeriesMeta, bool) { return cacheSeries.Get(id) }
+
+// SetCachedSeries seeds the series cache, for tests that need a known episode list.
+func SetCachedSeries(id string, sm SeriesMeta) { cacheSeries.Set(id, sm) }
+
+// ClearSeriesCache empties the series cache.
+func ClearSeriesCache() { cacheSeries.Clear() }

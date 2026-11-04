@@ -411,7 +411,7 @@ func posterVariants(url string, biggest bool) []string {
 func posterImg(url string) (*image.RGBA, bool) {
 	raw, ok := cachePosterBytes.Get(url)
 	if !ok {
-		res, err := stremio.HttpClient.Get(url)
+		res, err := stremio.HTTPClient.Get(url)
 		if err != nil {
 			return nil, false
 		}

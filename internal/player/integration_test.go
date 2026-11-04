@@ -39,6 +39,9 @@ type itEnv struct {
 	msgs  chan tea.Msg
 	vid   string // 8s clip, one embedded English subtitle
 	brief string // 3s clip, same
+
+	// The subtitle addons the player is told about; set before a play starts.
+	addons []stremio.Addon
 }
 
 func itSetup(t *testing.T) *itEnv {
@@ -76,7 +79,8 @@ func itSetup(t *testing.T) *itEnv {
 	os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+real+" \"$@\" --vo=null --ao=null --force-window=no\n"), 0755)
 
 	cfg := store.AppConfig{MpvPath: wrap, SubtitleLang: "eng, en, English", AutoSubtitle: true}
-	p := New(cfg)
+	e := &itEnv{}
+	p := New(cfg, func() []stremio.Addon { return e.addons })
 	store.PublishCfg(cfg)
 	store.LoadSubPrefs()
 	store.Hist = &store.HistoryStore{}
@@ -87,7 +91,7 @@ func itSetup(t *testing.T) *itEnv {
 	time.Sleep(200 * time.Millisecond)
 	p.Attach(prog)
 
-	// The next test replaces ctx and hist; the read loop and its helpers
+	// The next test replaces store.Hist and the config snapshot; the read loop and its helpers
 	// must be done with them first.
 	t.Cleanup(func() {
 		p.command("quit")
@@ -95,7 +99,8 @@ func itSetup(t *testing.T) *itEnv {
 		time.Sleep(500 * time.Millisecond)
 		prog.Quit()
 	})
-	return &itEnv{p: p, msgs: msgs, vid: mk("long.mkv", 8), brief: mk("short.mkv", 3)}
+	e.p, e.msgs, e.vid, e.brief = p, msgs, mk("long.mkv", 8), mk("short.mkv", 3)
+	return e
 }
 
 func itWait(t *testing.T, d time.Duration, what string, f func() bool) {
@@ -266,7 +271,7 @@ func (e *itEnv) fakeSubAddon(t *testing.T, lang string, delay time.Duration) {
 			Resources: []any{"subtitles"},
 		},
 	}}
-	e.p.SetAddons(func() []stremio.Addon { return addons })
+	e.addons = addons
 }
 
 // externalSubs counts subtitle tracks mpv has that are not inside the file.

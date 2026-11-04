@@ -181,12 +181,14 @@ internal/
   streams/         stream ranking, block terms, name parsing
   download/        the download worker and where files land
   queue/           the episode queue autoplay advances through
-  format/          pure formatting helpers (times, sizes, filenames, dates)
+  format/          formatting helpers with no UI or app state (times, sizes,
+                   filenames, dates); a few take stremio.Video
   langs/ paths/ jsonio/ cache/ bitfield/   small leaf packages
 ```
 
-Packages only import downward (`ui` → `player`/`store`/… → leaf packages), so
-`go test ./...` covers most of it without a terminal. The tests that drive a
+Packages only import downward (`ui` → `player`/`download`/`store`/… →
+`stremio`/`format`/… → leaf packages), so `go test ./...` covers most of it
+without a terminal. The tests that drive a
 real mpv are opt-in because they need `mpv` and `ffmpeg`:
 
 ```

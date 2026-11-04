@@ -53,7 +53,7 @@ func TestApplyWatchedBitfieldSparseStoreAligned(t *testing.T) {
 
 func TestWatchedBitfieldSparseSendsOnlyAnchor(t *testing.T) {
 	const show = "tt2"
-	stremio.CacheSeries.Clear()
+	stremio.ClearSeriesCache()
 	sh := &ShowState{Eps: map[string]*EpRecord{
 		EpKey(1, 4):  {W: true},
 		EpKey(1, 9):  {W: true},
@@ -71,10 +71,10 @@ func TestWatchedBitfieldSparseSendsOnlyAnchor(t *testing.T) {
 
 func TestWatchedBitfieldFullListKeepsAllBits(t *testing.T) {
 	const show = "tt3"
-	stremio.CacheSeries.Set(show, stremio.SeriesMeta{Videos: []stremio.Video{
+	stremio.SetCachedSeries(show, stremio.SeriesMeta{Videos: []stremio.Video{
 		{Season: 1, Episode: 1}, {Season: 1, Episode: 2}, {Season: 1, Episode: 3}, {Season: 1, Episode: 4},
 	}})
-	t.Cleanup(stremio.CacheSeries.Clear)
+	t.Cleanup(stremio.ClearSeriesCache)
 
 	sh := &ShowState{Eps: map[string]*EpRecord{EpKey(1, 1): {W: true}, EpKey(1, 3): {W: true}}}
 	bf := WatchedBitfield(show, sh)

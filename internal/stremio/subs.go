@@ -35,13 +35,13 @@ type Subtitle struct {
 	Rank  int    // injected: the addon's position in your list
 }
 
-var CacheSubs = cache.New[[]Subtitle](10*time.Minute, 60)
+var cacheSubs = cache.New[[]Subtitle](10*time.Minute, 60)
 
-// CacheSubsMiss remembers "nothing found" for a much shorter time. Never
+// cacheSubsMiss remembers "nothing found" for a much shorter time. Never
 // caching it meant every keystroke in the picker re-asked every addon; caching
 // it for the full ten minutes meant fixing a broken addon looked like it had
 // done nothing.
-var CacheSubsMiss = cache.New[[]Subtitle](60*time.Second, 60)
+var cacheSubsMiss = cache.New[[]Subtitle](60*time.Second, 60)
 
 // SubtitleAddons are the installed addons offering subtitles for this item.
 // Reuses the same resource check as streams and meta, so idPrefixes and
@@ -99,8 +99,8 @@ func DropSubsCache(q SubsQuery) {
 	if !ok {
 		key = base
 	}
-	CacheSubs.Delete(key)
-	CacheSubsMiss.Delete(key)
+	cacheSubs.Delete(key)
+	cacheSubsMiss.Delete(key)
 }
 
 // paths are the endpoints worth asking, best first.
@@ -187,10 +187,10 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 		subsFullKey[base] = key
 		subsFullKeyMu.Unlock()
 	}
-	if v, ok := CacheSubs.Get(key); ok {
+	if v, ok := cacheSubs.Get(key); ok {
 		return v
 	}
-	if v, ok := CacheSubsMiss.Get(key); ok {
+	if v, ok := cacheSubsMiss.Get(key); ok {
 		return v
 	}
 
@@ -293,9 +293,9 @@ func GetSubtitles(addons []Addon, q SubsQuery) []Subtitle {
 	// which orders by their preference. Sorting here would bake whatever
 	// preference happened to be set at fetch time into the shared cache.
 	if len(out) > 0 {
-		CacheSubs.Set(key, out)
+		cacheSubs.Set(key, out)
 	} else {
-		CacheSubsMiss.Set(key, out)
+		cacheSubsMiss.Set(key, out)
 	}
 	return out
 }

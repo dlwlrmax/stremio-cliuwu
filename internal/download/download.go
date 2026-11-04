@@ -26,7 +26,7 @@ import (
 // Downloads run one at a time. Debrid providers cap concurrent connections
 // per account, so parallel downloads mostly just make each other slower.
 
-// downloadClient has no overall timeout — the shared httpClient caps requests
+// downloadClient has no overall timeout — the shared stremio.HTTPClient caps requests
 // at 15s, which is right for a JSON call and fatal for a 2GB file. Connection
 // and header timeouts still apply, so a dead server won't hang forever.
 // downloadUA matters: Go announces itself as "Go-http-client/1.1" by default,

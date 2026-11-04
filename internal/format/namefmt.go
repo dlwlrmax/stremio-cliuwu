@@ -89,7 +89,7 @@ func ExpandPattern(pattern string, vals map[string]string) []string {
 	fill := strings.NewReplacer(pairs...)
 
 	// Either separator: a Windows user will reach for a backslash, and
-	// letting it fall through to safeName would turn the folder break into a
+	// letting it fall through to SafeName would turn the folder break into a
 	// literal "-" in the filename.
 	var segs []string
 	for _, seg := range strings.FieldsFunc(pattern, func(r rune) bool {

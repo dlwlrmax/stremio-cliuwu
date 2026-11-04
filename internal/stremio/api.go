@@ -20,7 +20,7 @@ const (
 	urlOMDB     = "https://www.omdbapi.com"
 )
 
-var HttpClient = &http.Client{
+var HTTPClient = &http.Client{
 	Timeout: 15 * time.Second,
 	Transport: &http.Transport{
 		DialContext: (&net.Dialer{
@@ -35,7 +35,7 @@ var HttpClient = &http.Client{
 
 func GetJSON(u string, out any) error { return GetJSONTimeout(u, out, 0) }
 
-// GetJSONTimeout is getJSON with a deadline of its own.
+// GetJSONTimeout is GetJSON with a deadline of its own.
 //
 // A manifest is a few hundred bytes and either answers quickly or isn't
 // coming. Letting it use the full fifteen second client timeout meant one
@@ -55,7 +55,7 @@ func GetJSONTimeout(u string, out any, timeout time.Duration) error {
 		req = req.WithContext(c)
 	}
 
-	r, err := HttpClient.Do(req)
+	r, err := HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -96,12 +96,21 @@ func GetJSONTimeout(u string, out any, timeout time.Duration) error {
 
 // Debrid providers hand out time-limited URLs, so this TTL is deliberately
 // short. InvalidateStreams drops an entry when a stream fails to open.
-var CacheStreams = cache.New[[]Stream](5*time.Minute, 100)
+var cacheStreams = cache.New[[]Stream](5*time.Minute, 100)
 
-func InvalidateStreams(videoID string) { CacheStreams.Delete(videoID) }
+func InvalidateStreams(videoID string) { cacheStreams.Delete(videoID) }
+
+// InvalidateCaches drops cached stream and subtitle results. Cached results
+// carry the addon ranks they were fetched with, so after the addon order
+// changes they have to go or the reorder looks like it did nothing.
+func InvalidateCaches() {
+	cacheStreams.Clear()
+	cacheSubs.Clear()
+	cacheSubsMiss.Clear()
+}
 
 func GetStreams(addons []Addon, mediaType, videoID string) []Stream {
-	if v, ok := CacheStreams.Get(videoID); ok {
+	if v, ok := cacheStreams.Get(videoID); ok {
 		return v
 	}
 
@@ -150,6 +159,6 @@ func GetStreams(addons []Addon, mediaType, videoID string) []Stream {
 	for _, r := range results {
 		all = append(all, r...)
 	}
-	CacheStreams.Set(videoID, all)
+	cacheStreams.Set(videoID, all)
 	return all
 }

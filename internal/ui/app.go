@@ -319,9 +319,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cached results carry the ranks they were fetched with, so without
 		// this a reorder wouldn't take effect until the five minute TTL ran
 		// out — which reads as the reorder having done nothing.
-		stremio.CacheStreams.Clear()
-		stremio.CacheSubs.Clear()
-		stremio.CacheSubsMiss.Clear()
+		stremio.InvalidateCaches()
 		return a, nil
 
 	case tea.KeyMsg:

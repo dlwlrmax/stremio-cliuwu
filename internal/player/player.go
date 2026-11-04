@@ -142,33 +142,31 @@ type Player struct {
 	ownSid     int                    // track id we just selected ourselves; 0 for none
 	ownSidTill time.Time              // after this, ownSid no longer excuses a change
 	pickSeq    uint64                 // bumped by each subtitle-track pick or off; newest wins
-	addonsFn   func() []stremio.Addon // where the subtitle addons come from; set by SetAddons
+	addonsFn   func() []stremio.Addon // where the subtitle addons come from; fixed at New
 	playGen    uint64                 // bumped on every play(); stale subtitle fetches drop out
 	seekTo     float64                // pending resume seek, applied on file-loaded
 	lastSave   time.Time              // throttles history writes
 	lastEmit   int                    // last whole second pushed to the UI
 }
 
-func New(cfg store.AppConfig) *Player {
-	return &Player{cfg: cfg, pending: map[uint32]chan map[string]any{}}
+// New builds a player. addons says where to find the addons it may ask for
+// subtitles: a function rather than a slice because the app replaces its addon
+// list wholesale on reload and the player should always see the current one.
+// It is a required argument on purpose — without it subtitle autoload would
+// quietly find nothing.
+func New(cfg store.AppConfig, addons func() []stremio.Addon) *Player {
+	return &Player{cfg: cfg, addonsFn: addons, pending: map[uint32]chan map[string]any{}}
 }
 
 func (p *Player) Attach(prog *tea.Program) { p.prog = prog }
 
-// SetAddons tells the player where to find the addons it may ask for
-// subtitles. A function rather than a slice: the app replaces its addon list
-// wholesale on reload, and the player should always see the current one.
-func (p *Player) SetAddons(fn func() []stremio.Addon) { p.mu.Lock(); p.addonsFn = fn; p.mu.Unlock() }
-
 func (p *Player) currentAddons() []stremio.Addon {
-	p.mu.Lock()
-	fn := p.addonsFn
-	p.mu.Unlock()
-	if fn == nil {
+	if p.addonsFn == nil {
 		return nil
 	}
-	return fn()
+	return p.addonsFn()
 }
+
 func (p *Player) SetConfig(cfg store.AppConfig) { p.mu.Lock(); p.cfg = cfg; p.mu.Unlock() }
 
 func (p *Player) emit(msg tea.Msg) {

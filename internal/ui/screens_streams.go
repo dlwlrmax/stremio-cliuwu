@@ -345,7 +345,7 @@ func (s *streamScreen) rebuild() {
 		}
 
 		s.shown = append(s.shown, i)
-		items = append(items, Item{Label: FmtStream(s.infos[i], opts)})
+		items = append(items, Item{Label: fmtStream(s.infos[i], opts)})
 	}
 	s.list.SetItems(items)
 	s.layout()
@@ -541,8 +541,8 @@ func (s *streamScreen) download(st stremio.Stream) tea.Cmd {
 		return toastErr("that stream has no url")
 	}
 
-	path := download.Path(ctx.cfg.DownloadDir, s.target.Meta, s.target.Label, s.target.Queue, st.URL)
-	msg, ok := ctx.downloader.Add(s.target.Label, st.URL, path)
+	dest := download.Path(ctx.cfg.DownloadDir, s.target.Meta, s.target.Label, s.target.Queue, st.URL)
+	msg, ok := ctx.downloader.Add(s.target.Label, st.URL, dest)
 	if !ok {
 		return toastErr(msg)
 	}
@@ -764,7 +764,7 @@ func (s *streamScreen) View() string {
 		out += bar + "\n"
 	}
 	if len(s.shown) > 0 {
-		out += StreamHeader(s.opts, ctx.cfg.StreamSort, s.reverse) + "\n"
+		out += streamHeader(s.opts, ctx.cfg.StreamSort, s.reverse) + "\n"
 	}
 	out += s.list.View()
 	if d := s.details(); d != "" {

@@ -120,9 +120,9 @@ func (c streamCol) pad(s string) string {
 	return padRight(s, c.width)
 }
 
-// StreamHeader labels the columns, aligned with FmtStream's rows. The column
+// streamHeader labels the columns, aligned with fmtStream's rows. The column
 // the list is sorted by gets an arrow, which says more than a footer entry.
-func StreamHeader(o rowOpts, sortBy string, reverse bool) string {
+func streamHeader(o rowOpts, sortBy string, reverse bool) string {
 	arrow := "↓"
 	if reverse {
 		arrow = "↑"
@@ -140,8 +140,8 @@ func StreamHeader(o rowOpts, sortBy string, reverse bool) string {
 	return strings.Repeat(" ", 8) + grey(strings.Join(parts, "  "))
 }
 
-// FmtStream produces a readable label for a stream entry.
-func FmtStream(in streamInfo, o rowOpts) string {
+// fmtStream produces a readable label for a stream entry.
+func fmtStream(in streamInfo, o rowOpts) string {
 	width := o.Width
 	if width < 40 {
 		width = 80 // not sized yet, or a very narrow terminal

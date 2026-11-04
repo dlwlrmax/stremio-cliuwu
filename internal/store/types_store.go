@@ -203,7 +203,7 @@ type Favourite struct {
 	Season int    `json:"season"` // 0 = whole show
 	Added  string `json:"added"`
 
-	// Same reason as showState.Base: a favourited library entry is opened
+	// Same reason as ShowState.Base: a favourited library entry is opened
 	// by asking its addon for the file list, and nothing else records which
 	// addon that was.
 	Base string `json:"base,omitempty"`

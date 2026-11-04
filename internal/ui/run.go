@@ -122,12 +122,14 @@ func Run(args []string, buildVersion string) {
 	}
 
 	store.PublishCfg(cfg)
-	player := player.New(cfg)
+	// The addon list is replaced wholesale on reload, so the player asks for it
+	// each time instead of holding a slice. ctx exists by the time it is called.
+	pl := player.New(cfg, func() []stremio.Addon { return ctx.Addons() })
 	downloader := download.New()
 	ctx = &appCtx{
 		cfg:        cfg,
 		refs:       refs,
-		player:     player,
+		player:     pl,
 		downloader: downloader,
 		loading:    true,
 	}
@@ -137,8 +139,7 @@ func Run(args []string, buildVersion string) {
 
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	ctx.prog = prog
-	player.Attach(prog)
-	player.SetAddons(ctx.Addons)
+	pl.Attach(prog)
 	downloader.Attach(prog)
 
 	// Manifests are fetched after the UI is up, not before it.
@@ -179,9 +180,9 @@ func Run(args []string, buildVersion string) {
 		once.Do(func() {
 			kittyCleanup() // free terminal-side poster images, if any
 			if ctx.cfg.CloseMpvOnExit {
-				player.Quit()
+				pl.Quit()
 			} else {
-				player.Shutdown()
+				pl.Shutdown()
 			}
 			store.FlushHistory() // debounced writes mean the last few seconds are still in memory
 		})

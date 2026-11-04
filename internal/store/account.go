@@ -94,7 +94,7 @@ func ClearAccount() { _ = os.Remove(paths.AccountFile()) }
 // ── HTTP ──────────────────────────────────────────────────────────────────────
 
 // stremioPost sends a JSON body and unwraps the envelope into out. It reuses
-// httpClient, whose 15s timeout covers the whole request — a login that hangs
+// stremio.HTTPClient, whose 15s timeout covers the whole request — a login that hangs
 // otherwise locks the UI's sync command forever.
 func stremioPost(endpoint string, body any, out any) error {
 	b, err := json.Marshal(body)
@@ -110,7 +110,7 @@ func stremioPost(endpoint string, body any, out any) error {
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
-	r, err := stremio.HttpClient.Do(req)
+	r, err := stremio.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -462,7 +462,7 @@ func StremioVideoID(showID string, season, episode int) string {
 	return fmt.Sprintf("%s:%d:%d", showID, season, episode)
 }
 
-// EpisodeOfVideoID is the reverse of stremioVideoID. Knowing the show id lets
+// EpisodeOfVideoID is the reverse of StremioVideoID. Knowing the show id lets
 // it tell "kitsu:1234:5" (episode 5) from "tt1:2:5" (season 2, episode 5); the
 // bare last-two-segments reading in videoEpisode takes the Kitsu id for a
 // season. An id that doesn't start with the show id falls back to that.
