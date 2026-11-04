@@ -1,4 +1,4 @@
-package main
+package cache
 
 import (
 	"sync"
@@ -16,7 +16,7 @@ type cacheEntry[T any] struct {
 	bytes int
 }
 
-type ttlCache[T any] struct {
+type TTL[T any] struct {
 	mu    sync.Mutex
 	items map[string]cacheEntry[T]
 	ttl   time.Duration
@@ -34,20 +34,20 @@ type ttlCache[T any] struct {
 	sizeOf   func(T) int
 }
 
-func newCache[T any](ttl time.Duration, max int) *ttlCache[T] {
-	return &ttlCache[T]{items: map[string]cacheEntry[T]{}, ttl: ttl, max: max}
+func New[T any](ttl time.Duration, max int) *TTL[T] {
+	return &TTL[T]{items: map[string]cacheEntry[T]{}, ttl: ttl, max: max}
 }
 
-// newSizedCache bounds by count and by total bytes, whichever binds first.
-func newSizedCache[T any](ttl time.Duration, max, maxBytes int, sizeOf func(T) int) *ttlCache[T] {
-	return &ttlCache[T]{
+// NewSized bounds by count and by total bytes, whichever binds first.
+func NewSized[T any](ttl time.Duration, max, maxBytes int, sizeOf func(T) int) *TTL[T] {
+	return &TTL[T]{
 		items: map[string]cacheEntry[T]{}, ttl: ttl, max: max,
 		maxBytes: maxBytes, sizeOf: sizeOf,
 	}
 }
 
 // drop removes an entry and its byte count. Caller holds the lock.
-func (c *ttlCache[T]) drop(key string) {
+func (c *TTL[T]) drop(key string) {
 	if e, ok := c.items[key]; ok {
 		c.bytes -= e.bytes
 		delete(c.items, key)
@@ -55,7 +55,7 @@ func (c *ttlCache[T]) drop(key string) {
 }
 
 // oldest returns the least recently stored key, or "" when empty.
-func (c *ttlCache[T]) oldest() string {
+func (c *TTL[T]) oldest() string {
 	var key string
 	var at time.Time
 	for k, e := range c.items {
@@ -66,7 +66,7 @@ func (c *ttlCache[T]) oldest() string {
 	return key
 }
 
-func (c *ttlCache[T]) Get(key string) (T, bool) {
+func (c *TTL[T]) Get(key string) (T, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -83,7 +83,7 @@ func (c *ttlCache[T]) Get(key string) (T, bool) {
 	return e.val, true
 }
 
-func (c *ttlCache[T]) Set(key string, val T) {
+func (c *TTL[T]) Set(key string, val T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -122,13 +122,13 @@ func (c *ttlCache[T]) Set(key string, val T) {
 	c.bytes += size
 }
 
-func (c *ttlCache[T]) Delete(key string) {
+func (c *TTL[T]) Delete(key string) {
 	c.mu.Lock()
 	c.drop(key)
 	c.mu.Unlock()
 }
 
-func (c *ttlCache[T]) Clear() {
+func (c *TTL[T]) Clear() {
 	c.mu.Lock()
 	c.items = map[string]cacheEntry[T]{}
 	c.bytes = 0

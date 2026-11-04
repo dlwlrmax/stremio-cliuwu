@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"stremio-cliuwu/internal/cache"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +17,13 @@ import (
 // from the installed manifests.
 
 var (
-	cacheCatalog = newCache[catalogResponse](10*time.Minute, 200)
-	cacheSearch  = newCache[[]Meta](5*time.Minute, 100)
+	cacheCatalog = cache.New[catalogResponse](10*time.Minute, 200)
+	cacheSearch  = cache.New[[]Meta](5*time.Minute, 100)
 	// A SeriesMeta carries every episode's overview, so it scales with the
 	// length of the show: a season of something is tens of kilobytes, a
 	// thousand-episode anime is closer to half a megabyte. Bounded by both,
 	// since neither number alone describes the memory.
-	cacheSeries = newSizedCache(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
+	cacheSeries = cache.NewSized(30*time.Minute, 40, 8<<20, func(sm SeriesMeta) int {
 		n := len(sm.Name) + len(sm.Poster)
 		for _, v := range sm.Videos {
 			n += len(v.Title) + len(v.Overview) + len(v.ID) + len(v.Thumbnail) + 64
@@ -357,7 +358,7 @@ func metaBasesUndeclared(addons []Addon, mediaType, id string) []string {
 	return out
 }
 
-var cacheMetaDetail = newCache[MetaDetail](30*time.Minute, 300)
+var cacheMetaDetail = cache.New[MetaDetail](30*time.Minute, 300)
 
 // metaFlight dedupes concurrent meta fetches for the same title: the first
 // caller does the request and callers that arrive while it is in flight wait

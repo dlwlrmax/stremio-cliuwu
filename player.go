@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"stremio-cliuwu/internal/langs"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -695,7 +696,7 @@ func (p *Player) maybeAutoSubtitle() {
 		return
 	}
 
-	prefs := PreferredLangs(cfg.SubtitleLang)
+	prefs := langs.Preferred(cfg.SubtitleLang)
 	if len(prefs) == 0 && !hasPref {
 		return
 	}
@@ -767,7 +768,7 @@ func (p *Player) maybeAutoSubtitle() {
 			}
 			for i := range subs {
 				s := subs[i]
-				if shipped[s.URL] || langName(s.Lang) != prefLang {
+				if shipped[s.URL] || langs.Name(s.Lang) != prefLang {
 					continue
 				}
 				if p.addSubtitle(gen, s) {
@@ -807,7 +808,7 @@ func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtit
 		}
 		for j := range subs {
 			s := subs[j]
-			if shipped[s.URL] || langName(s.Lang) != tier {
+			if shipped[s.URL] || langs.Name(s.Lang) != tier {
 				continue
 			}
 			if p.addSubtitle(gen, s) {
@@ -832,7 +833,7 @@ func (p *Player) tryEmbedded(gen uint64, req *PlayRequest, lang, track string) b
 	// it's an external URL, loaded like a plugin one.
 	for i := range req.Subs {
 		s := req.Subs[i]
-		if langName(s.Lang) != lang {
+		if langs.Name(s.Lang) != lang {
 			continue
 		}
 		if p.addSubtitle(gen, s) {
@@ -847,7 +848,7 @@ func (p *Player) tryEmbedded(gen uint64, req *PlayRequest, lang, track string) b
 func (p *Player) loadShowPlugin(gen uint64, subs []Subtitle, shipped map[string]bool, lang string) bool {
 	for i := range subs {
 		s := subs[i]
-		if shipped[s.URL] || langName(s.Lang) != lang {
+		if shipped[s.URL] || langs.Name(s.Lang) != lang {
 			continue
 		}
 		if p.addSubtitle(gen, s) {
@@ -951,7 +952,7 @@ func subTracks(tracks []any) []subTrack {
 		}
 		st := subTrack{id: int(id)}
 		if l, _ := m["lang"].(string); strings.TrimSpace(l) != "" {
-			st.lang = langName(l)
+			st.lang = langs.Name(l)
 		}
 		st.title, _ = m["title"].(string)
 		st.external, _ = m["external"].(bool)
@@ -1011,11 +1012,11 @@ func (p *Player) addSubtitle(gen uint64, s Subtitle) bool {
 	if !p.isCurrent(gen) {
 		return false
 	}
-	msg, _ := p.AddSubtitle(s.URL, langName(s.Lang), s.Lang)().(SubtitleAddedMsg)
+	msg, _ := p.AddSubtitle(s.URL, langs.Name(s.Lang), s.Lang)().(SubtitleAddedMsg)
 	if msg.Err != nil {
 		return false
 	}
-	notice := "subtitles: " + langName(s.Lang) + " · " + s.Label()
+	notice := "subtitles: " + langs.Name(s.Lang) + " · " + s.Label()
 	if s.Addon != "" {
 		notice += " via " + s.Addon
 	}
@@ -1042,7 +1043,7 @@ func (p *Player) maybeAutoAudio() {
 	if order == "" {
 		return
 	}
-	prefs := PreferredLangs(order)
+	prefs := langs.Preferred(order)
 	if len(prefs) == 0 {
 		return
 	}
@@ -1110,7 +1111,7 @@ type audioTrack struct {
 }
 
 func audioTier(t audioTrack, prefs []string) int {
-	name := langName(strings.ToLower(t.lang))
+	name := langs.Name(strings.ToLower(t.lang))
 	// Rank purely by the user's preference order; unlisted languages come last.
 	if i := slices.Index(prefs, name); i >= 0 {
 		return 2 + i

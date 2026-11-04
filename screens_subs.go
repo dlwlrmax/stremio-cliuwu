@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"slices"
+	"stremio-cliuwu/internal/langs"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -105,7 +106,7 @@ func (s *subsScreen) collectLangs() {
 	s.langs = []string{"all"}
 
 	for _, sub := range s.subs {
-		if n := langName(sub.Lang); !seen[n] {
+		if n := langs.Name(sub.Lang); !seen[n] {
 			seen[n] = true
 			s.langs = append(s.langs, n)
 		}
@@ -123,8 +124,8 @@ func (s *subsScreen) collectLangs() {
 		}
 	}
 	if want == "" {
-		if sub := PickPreferred(s.subs, PreferredLangs(ctx.cfg.SubtitleLang)); sub != nil {
-			want = langName(sub.Lang)
+		if sub := PickPreferred(s.subs, langs.Preferred(ctx.cfg.SubtitleLang)); sub != nil {
+			want = langs.Name(sub.Lang)
 		}
 	}
 	for i, l := range s.langs {
@@ -145,7 +146,7 @@ func (s *subsScreen) rebuild() {
 
 	var items []Item
 	for i, sub := range s.subs {
-		if filter != "" && langName(sub.Lang) != filter {
+		if filter != "" && langs.Name(sub.Lang) != filter {
 			continue
 		}
 		s.shown = append(s.shown, i)
@@ -155,7 +156,7 @@ func (s *subsScreen) rebuild() {
 		}
 
 		items = append(items, Item{
-			Label: bold(langName(sub.Lang)),
+			Label: bold(langs.Name(sub.Lang)),
 			Sub:   sub.Label(),
 			Badge: badge,
 		})
@@ -239,7 +240,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			if s.pending.Addon == "stream" {
 				src = "embedded"
 			}
-			SetSubPref(s.showID, langName(s.pending.Lang), src)
+			SetSubPref(s.showID, langs.Name(s.pending.Lang), src)
 			s.pending = nil
 
 			// A hand pick is the end of the errand: close the list and get
@@ -280,8 +281,8 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			// the next one. A pick that takes closes the screen (see
 			// SubtitleAddedMsg below).
 			return s, tea.Batch(
-				ctx.player.AddSubtitle(sub.URL, langName(sub.Lang), sub.Lang),
-				toast("loading "+langName(sub.Lang)+" subtitles…"),
+				ctx.player.AddSubtitle(sub.URL, langs.Name(sub.Lang), sub.Lang),
+				toast("loading "+langs.Name(sub.Lang)+" subtitles…"),
 			)
 
 		case "R":

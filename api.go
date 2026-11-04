@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"stremio-cliuwu/internal/cache"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +96,7 @@ func getJSONTimeout(u string, out any, timeout time.Duration) error {
 
 // Debrid providers hand out time-limited URLs, so this TTL is deliberately
 // short. InvalidateStreams drops an entry when a stream fails to open.
-var cacheStreams = newCache[[]Stream](5*time.Minute, 100)
+var cacheStreams = cache.New[[]Stream](5*time.Minute, 100)
 
 func InvalidateStreams(videoID string) { cacheStreams.Delete(videoID) }
 

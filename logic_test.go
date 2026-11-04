@@ -6,13 +6,6 @@ import (
 	"time"
 )
 
-func TestPreferredLangsDedupesAliases(t *testing.T) {
-	got := PreferredLangs("eng, en, English, spa")
-	if len(got) != 2 || got[0] != "English" || got[1] != "Spanish" {
-		t.Errorf("got %v", got)
-	}
-}
-
 func TestPickPreferredHonoursOrder(t *testing.T) {
 	subs := []Subtitle{{Lang: "spa", URL: "s"}, {Lang: "eng", URL: "e"}}
 	if got := PickPreferred(subs, []string{"English"}); got == nil || got.URL != "e" {

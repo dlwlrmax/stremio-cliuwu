@@ -10,6 +10,7 @@ import (
 	neturl "net/url"
 	"os/exec"
 	"runtime"
+	"stremio-cliuwu/internal/cache"
 	"strings"
 	"time"
 
@@ -123,18 +124,18 @@ var (
 	// the pixels in the terminal, and the only later reader wants the
 	// dimensions. Caching decoded images put a 209MB ceiling on a cache
 	// bounded by count rather than bytes.
-	cachePosterBytes = newSizedCache(30*time.Minute, 40, 12<<20,
+	cachePosterBytes = cache.NewSized(30*time.Minute, 40, 12<<20,
 		func(b []byte) int { return len(b) })
 
 	// Width and height per url. Small enough to keep a lot of, and enough
 	// to answer both the resize path and the kitty residency check without
 	// decoding anything.
-	cachePosterDims = newCache[posterDims](6*time.Hour, 2000)
+	cachePosterDims = cache.New[posterDims](6*time.Hour, 2000)
 	// Byte-bounded for the same reason as the bytes cache: a rendered
 	// poster is 48kB at medium and 288kB at xxl, since every cell carries
 	// its own truecolor escape. A count of 120 is 6MB or 34MB depending on
 	// a setting the cache knows nothing about.
-	cachePosterArt = newSizedCache(30*time.Minute, 120, 8<<20,
+	cachePosterArt = cache.NewSized(30*time.Minute, 120, 8<<20,
 		func(s string) int { return len(s) })
 )
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"stremio-cliuwu/internal/langs"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -554,7 +555,7 @@ func (s *settingsScreen) rebuild() {
 					"passed to mpv as --slang, and preselected in the S picker",
 					"",
 				}
-				help = append(help, LangReference()...)
+				help = append(help, langs.Reference()...)
 
 				return s.prompt("subtitle language", "eng, en, English", ctx.cfg.SubtitleLang,
 					func(v string) tea.Cmd {
@@ -574,7 +575,7 @@ func (s *settingsScreen) rebuild() {
 					"passed to mpv as --alang, plus auto-pick on each file",
 					"",
 				}
-				help = append(help, LangReference()...)
+				help = append(help, langs.Reference()...)
 
 				return s.prompt("audio language", "jpn,chi,eng", ctx.cfg.AudioLang,
 					func(v string) tea.Cmd {
