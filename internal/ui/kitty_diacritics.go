@@ -3,7 +3,7 @@
 // github.com/charmbracelet/x/ansi (MIT), kitty/kitty/graphics.go.
 // They map small integers (row, column, id high byte) to combining
 // characters for Unicode placeholders — see kitty.go.
-package main
+package ui
 
 var kittyDiacritics = []rune{
 	'\u0305',

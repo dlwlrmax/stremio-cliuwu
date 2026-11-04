@@ -169,6 +169,30 @@ list down, now you just paste the URLs in. Catalogs and search come from your
 installed addons rather than being hardcoded, so adding an addon actually adds
 something to browse.
 
+## Development
+
+```
+main.go            entry point; only carries the build-time version
+internal/
+  ui/              screens, list/panel widgets, posters, the app model
+  player/          mpv IPC: playback, subtitle/audio autoload, per-show prefs applied
+  store/           config, history, favourites, subtitle prefs, account sync
+  stremio/         protocol types and the addon / catalog / stream / subtitle client
+  streams/         stream ranking, block terms, name parsing
+  download/        the download worker and where files land
+  queue/           the episode queue autoplay advances through
+  format/          pure formatting helpers (times, sizes, filenames, dates)
+  langs/ paths/ jsonio/ cache/ bitfield/   small leaf packages
+```
+
+Packages only import downward (`ui` → `player`/`store`/… → leaf packages), so
+`go test ./...` covers most of it without a terminal. The tests that drive a
+real mpv are opt-in because they need `mpv` and `ffmpeg`:
+
+```
+STREMIO_MPV_TEST=1 go test ./internal/player
+```
+
 ## Licence
 
 MIT
