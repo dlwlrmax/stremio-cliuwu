@@ -133,6 +133,10 @@ type Player struct {
 	prefetched bool         // next episode already surfaced for this request
 	autoSubbed bool         // subtitle autoload already attempted for this request
 	subSeen    bool         // a subtitle track was active in the current file
+	loadedAt   time.Time    // when the current file finished loading
+	ownSid     int          // track id we just selected ourselves; 0 for none
+	ownSidTill time.Time    // after this, ownSid no longer excuses a change
+	pickSeq    uint64       // bumped by each subtitle-track pick or off; newest wins
 	playGen    uint64       // bumped on every play(); stale subtitle fetches drop out
 	seekTo     float64      // pending resume seek, applied on file-loaded
 	lastSave   time.Time    // throttles history writes
@@ -518,6 +522,7 @@ func (p *Player) dispatch(m map[string]any) {
 
 func (p *Player) onProperty(name string, data any) {
 	showID := ""
+	pickShow, pickSid, pickGen, pickSeq := "", 0, uint64(0), uint64(0)
 	p.mu.Lock()
 	switch name {
 	case "time-pos":
@@ -541,12 +546,26 @@ func (p *Player) onProperty(name string, data any) {
 		// mpv reports "no" as false: turning subtitles off after they had
 		// been on is the user saying this show wants none. Null (no file) and
 		// anything during a load are not that.
-		if _, on := data.(float64); on {
+		if v, on := data.(float64); on {
 			p.subSeen = true
+			switch {
+			case p.ownSid == int(v) && time.Now().Before(p.ownSidTill):
+				// Our own autoloader selected this one.
+				p.ownSid = 0
+			case !p.state.Loading && !p.replacing && !p.loadedAt.IsZero() &&
+				time.Since(p.loadedAt) > handPickAfter &&
+				p.now != nil && p.now.MediaType == "series" && p.now.Queue != nil:
+				// A track switch well after load is the user using mpv's own
+				// menu: mpv's --slang pick and our autoloader both land
+				// within the first moments.
+				p.pickSeq++
+				pickShow, pickSid, pickGen, pickSeq = p.now.Entry.ID, int(v), p.playGen, p.pickSeq
+			}
 		} else if off, ok := data.(bool); ok && !off && p.subSeen &&
 			!p.state.Loading && !p.replacing &&
 			p.now != nil && p.now.MediaType == "series" && p.now.Queue != nil {
 			p.subSeen = false
+			p.pickSeq++ // a pick still being resolved is older than this
 			showID = p.now.Entry.ID
 		}
 	}
@@ -585,6 +604,9 @@ func (p *Player) onProperty(name string, data any) {
 	if showID != "" {
 		go SetSubPref(showID, subOff, "")
 	}
+	if pickShow != "" {
+		p.sendAsync(func() { p.rememberEmbeddedPick(pickGen, pickSeq, pickShow, pickSid) })
+	}
 	if save {
 		go UpdatePosition(videoID, st.Pos, st.Duration)
 	}
@@ -602,6 +624,7 @@ func (p *Player) onFileLoaded() {
 	p.state.Loading = false
 	seek := p.seekTo
 	p.seekTo = 0
+	p.loadedAt = time.Now()
 	st := p.state
 	p.mu.Unlock()
 
@@ -698,6 +721,13 @@ func (p *Player) maybeAutoSubtitle() {
 	// goroutine has no lock under which to read the header.
 	addons := slices.Clone(ctx.Addons())
 	p.sendAsync(func() {
+		// What is already in the file needs no network, so it goes first: the
+		// show's language shouldn't wait on the slowest subtitle addon while
+		// --slang's own pick is on screen.
+		if hasPref && p.tryEmbedded(gen, &req, pref.Lang, pref.Track) {
+			return
+		}
+
 		subs := MergeSubtitles(req.Subs, GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
 
 		// A new play() may have started while the network was slow. Its result
@@ -749,12 +779,12 @@ func (p *Player) maybeAutoSubtitle() {
 }
 
 // autoSubtitleForShow applies a per-show preference: the language the user last
-// chose for this show, preferring the source they chose it from.
+// chose for this show.
 //
-// Tiers are the show language first, then the global preference list. The show
-// tier tries its recorded source first and the other second; a language absent
-// from both sources falls through to the normal per-tier handling for the
-// remaining languages.
+// Tiers are the show language first, then the global preference list. The
+// caller has already tried the show language inside the file (tryEmbedded), so
+// its tier here is the plugins; a language absent from both falls through to
+// the normal per-tier handling for the remaining languages.
 func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtitle, shipped map[string]bool, pref ShowSubPref, fallback []string) {
 	lang := pref.Lang
 
@@ -767,7 +797,7 @@ func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtit
 
 	for i, tier := range tiers {
 		if i == 0 {
-			if p.loadShowTier(gen, req, subs, shipped, tier, pref.Src) {
+			if p.loadShowPlugin(gen, subs, shipped, tier) {
 				return
 			}
 			continue
@@ -787,53 +817,50 @@ func (p *Player) autoSubtitleForShow(gen uint64, req *PlayRequest, subs []Subtit
 	}
 }
 
-// loadShowTier loads the show's own language, trying the source the user picked
-// first and the other one after. A dead link fails inside mpv, so each
-// candidate is tried in turn.
-func (p *Player) loadShowTier(gen uint64, req *PlayRequest, subs []Subtitle, shipped map[string]bool, lang, src string) bool {
-	embedded := func() bool {
-		// The track the user means by "embedded" is usually already in the
-		// file, and --slang is global, so a show language ranked low there
-		// wouldn't be selected on its own. Set sid explicitly.
-		if p.selectEmbeddedSub(gen, lang) {
+// tryEmbedded loads the show's language from what needs no fetch: a track
+// inside the file, else one shipped with the stream. A track that is already
+// timed to this exact file beats a fetched one whatever the show was last
+// picked from.
+func (p *Player) tryEmbedded(gen uint64, req *PlayRequest, lang, track string) bool {
+	// The track the user means by "embedded" is usually already in the file,
+	// and --slang is global, so a show language ranked low there wouldn't be
+	// selected on its own. Set sid explicitly.
+	if p.selectEmbeddedSub(gen, lang, track) {
+		return true
+	}
+	// A subtitle shipped with the stream is the next best embedded candidate;
+	// it's an external URL, loaded like a plugin one.
+	for i := range req.Subs {
+		s := req.Subs[i]
+		if langName(s.Lang) != lang {
+			continue
+		}
+		if p.addSubtitle(gen, s) {
 			return true
 		}
-		// Otherwise a subtitle shipped with the stream is the next best
-		// embedded candidate; it's an external URL, loaded like a plugin one.
-		for i := range req.Subs {
-			s := req.Subs[i]
-			if langName(s.Lang) != lang {
-				continue
-			}
-			if p.addSubtitle(gen, s) {
-				return true
-			}
-		}
-		return false
 	}
-	plugin := func() bool {
-		for i := range subs {
-			s := subs[i]
-			if shipped[s.URL] || langName(s.Lang) != lang {
-				continue
-			}
-			if p.addSubtitle(gen, s) {
-				return true
-			}
-		}
-		return false
-	}
-
-	if src == "embedded" {
-		return embedded() || plugin()
-	}
-	return plugin() || embedded()
+	return false
 }
 
-// selectEmbeddedSub picks the subtitle track already inside the file whose
-// language matches, by setting mpv's sid directly. Mirrors maybeAutoAudio's
-// track-list walk; any failure is silent so playback is never broken.
-func (p *Player) selectEmbeddedSub(gen uint64, lang string) bool {
+// loadShowPlugin loads the show's language from the fetched plugin tracks. A
+// dead link fails inside mpv, so each candidate is tried in turn.
+func (p *Player) loadShowPlugin(gen uint64, subs []Subtitle, shipped map[string]bool, lang string) bool {
+	for i := range subs {
+		s := subs[i]
+		if shipped[s.URL] || langName(s.Lang) != lang {
+			continue
+		}
+		if p.addSubtitle(gen, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// selectEmbeddedSub picks the subtitle track already inside the file for this
+// language (and title, when several share it), by setting mpv's sid directly.
+// Any failure is silent so playback is never broken.
+func (p *Player) selectEmbeddedSub(gen uint64, lang, title string) bool {
 	if !p.isCurrent(gen) {
 		return false
 	}
@@ -842,7 +869,75 @@ func (p *Player) selectEmbeddedSub(gen uint64, lang string) bool {
 		return false
 	}
 	raw, _ := resp["data"].([]any)
-	for _, it := range raw {
+	id, selected, ok := pickEmbeddedSub(raw, lang, title)
+	if !ok {
+		return false
+	}
+	if !selected {
+		// Armed only when a change is coming — setting the track that is
+		// already on makes no event to consume it — and disarmed if the
+		// command fails, so it can't excuse a later hand pick.
+		p.mu.Lock()
+		p.ownSid, p.ownSidTill = id, time.Now().Add(ownSidWindow)
+		p.mu.Unlock()
+		if _, err := p.command("set_property", "sid", id); err != nil {
+			p.mu.Lock()
+			p.ownSid = 0
+			p.mu.Unlock()
+			return false
+		}
+	}
+	p.emit(PlayerNoticeMsg{Text: "subtitles: " + lang + " · embedded"})
+	return true
+}
+
+const (
+	// handPickAfter is how long after a file loads a subtitle-track change
+	// still counts as mpv's --slang pick or our own autoload rather than the
+	// user's. Generous, because a remote stream can settle its tracks late;
+	// a real pick inside it is simply not remembered.
+	handPickAfter = 3 * time.Second
+	// ownSidWindow is how long our own track selection waits for its event
+	// to come back through a busy read loop.
+	ownSidWindow = 5 * time.Second
+)
+
+// rememberEmbeddedPick records a track the user switched to in mpv's own
+// menu, so the next episode of the show starts on it. Only a track inside the
+// file qualifies; see embeddedSubAt. Runs off the read loop (it asks mpv).
+//
+// seq is the pick's place in line: while this waits on mpv the user may have
+// picked again or switched subtitles off, and the newer one has to win.
+func (p *Player) rememberEmbeddedPick(gen, seq uint64, showID string, sid int) {
+	resp, err := p.command("get_property", "track-list")
+	if err != nil {
+		return
+	}
+	p.mu.Lock()
+	stale := p.playGen != gen || p.pickSeq != seq
+	p.mu.Unlock()
+	if stale {
+		return
+	}
+	raw, _ := resp["data"].([]any)
+	if lang, title, ok := embeddedSubAt(raw, sid); ok {
+		SetEmbeddedPref(showID, lang, title)
+	}
+}
+
+// subTrack is one subtitle entry from mpv's track-list.
+type subTrack struct {
+	id       int
+	lang     string // canonical name, "" when the file does not tag one
+	title    string
+	external bool
+	selected bool
+}
+
+// subTracks reads the subtitle entries out of mpv's track-list.
+func subTracks(tracks []any) []subTrack {
+	var out []subTrack
+	for _, it := range tracks {
 		m, ok := it.(map[string]any)
 		if !ok {
 			continue
@@ -850,21 +945,55 @@ func (p *Player) selectEmbeddedSub(gen uint64, lang string) bool {
 		if t, _ := m["type"].(string); t != "sub" {
 			continue
 		}
-		l, _ := m["lang"].(string)
-		if langName(l) != lang {
-			continue
-		}
 		id, ok := m["id"].(float64)
 		if !ok {
 			continue
 		}
-		if _, err := p.command("set_property", "sid", int(id)); err != nil {
-			return false
+		st := subTrack{id: int(id)}
+		if l, _ := m["lang"].(string); strings.TrimSpace(l) != "" {
+			st.lang = langName(l)
 		}
-		p.emit(PlayerNoticeMsg{Text: "subtitles: " + lang + " · embedded"})
-		return true
+		st.title, _ = m["title"].(string)
+		st.external, _ = m["external"].(bool)
+		st.selected, _ = m["selected"].(bool)
+		out = append(out, st)
 	}
-	return false
+	return out
+}
+
+// embeddedSubAt reports the language and title of the subtitle track with this
+// id when it is a track inside the file. External tracks are what our own
+// sub-add made, and a track with no language tag could never be matched on
+// another episode, so neither is worth remembering.
+func embeddedSubAt(tracks []any, sid int) (lang, title string, ok bool) {
+	for _, t := range subTracks(tracks) {
+		if t.id != sid {
+			continue
+		}
+		if t.external || t.lang == "" {
+			return "", "", false
+		}
+		return t.lang, t.title, true
+	}
+	return "", "", false
+}
+
+// pickEmbeddedSub finds the in-file subtitle track for a language. When
+// several share it, the one with the remembered title wins and the first is the
+// fallback. selected reports that mpv already has it on.
+func pickEmbeddedSub(tracks []any, lang, title string) (id int, selected, ok bool) {
+	for _, t := range subTracks(tracks) {
+		if t.external || t.lang != lang {
+			continue
+		}
+		if !ok {
+			id, selected, ok = t.id, t.selected, true
+		}
+		if title != "" && t.title == title {
+			return t.id, t.selected, true
+		}
+	}
+	return id, selected, ok
 }
 
 // addSubtitle loads a track and, on success, announces it. Shared by the
@@ -1107,6 +1236,8 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	p.prefetched = false
 	p.autoSubbed = false
 	p.subSeen = false
+	p.loadedAt = time.Time{}
+	p.ownSid = 0
 	p.playGen++    // invalidates any subtitle fetch still in flight
 	p.queued = nil // choosing something now supersedes whatever was lined up
 	p.now = &req
