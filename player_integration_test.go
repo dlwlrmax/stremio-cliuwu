@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"testing"
@@ -134,7 +135,7 @@ func seriesReq(file, show string, ep int) PlayRequest {
 	return PlayRequest{
 		VideoID: fmt.Sprintf("%s:1:%d", show, ep), MediaType: "series", Label: "t", URL: file,
 		Entry: store.HistoryEntry{ID: show, Name: "Show", Type: "series", Season: 1, Episode: ep, VideoID: fmt.Sprintf("%s:1:%d", show, ep)},
-		Queue: &EpQueue{Show: stremio.Meta{ID: show, Name: "Show"}, Season: 1, Episodes: eps, All: eps, Index: ep - 1},
+		Queue: &queue.EpQueue{Show: stremio.Meta{ID: show, Name: "Show"}, Season: 1, Episodes: eps, All: eps, Index: ep - 1},
 	}
 }
 

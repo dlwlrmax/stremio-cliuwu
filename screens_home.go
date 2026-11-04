@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
@@ -272,7 +273,7 @@ func (s *menuScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.panel.SetTargetInfo(m)
 		return s, nil
 
-	case DownloadTickMsg:
+	case download.TickMsg:
 		cur := s.list.Selected()
 		s.rebuild()
 		if cur >= 0 {

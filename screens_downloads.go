@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/download"
+	"stremio-cliuwu/internal/format"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -9,7 +11,7 @@ import (
 type downloadsScreen struct {
 	baseScreen
 	list  listModel
-	items []Download
+	items []download.Job
 }
 
 func newDownloadsScreen() *downloadsScreen {
@@ -36,7 +38,7 @@ func (s *downloadsScreen) Init() tea.Cmd {
 // downloadTick asks the downloads list to rebuild. Safe from inside Update,
 // unlike Downloader.emit, which Sends.
 func downloadTick() tea.Cmd {
-	return func() tea.Msg { return DownloadTickMsg{} }
+	return func() tea.Msg { return download.TickMsg{} }
 }
 
 func (s *downloadsScreen) Title() string { return "downloads" }
@@ -66,15 +68,15 @@ func (s *downloadsScreen) rebuild() {
 		it := Item{Label: bold(d.Label)}
 
 		switch d.State {
-		case DLActive:
+		case download.DLActive:
 			// Bar plus figures, since a bar alone doesn't tell you whether a
 			// stalled download is stalled at 400MB or 4MB.
 			bar := progressBar(d.Frac(), 20)
-			sub := fmt.Sprintf("%s / %s", fmtBytes(d.Done), fmtBytes(d.Total))
+			sub := fmt.Sprintf("%s / %s", format.Bytes(d.Done), format.Bytes(d.Total))
 			if d.Speed > 0 {
-				sub += "  ·  " + fmtBytes(d.Speed) + "/s"
+				sub += "  ·  " + format.Bytes(d.Speed) + "/s"
 			}
-			if eta := fmtETA(d); eta != "" {
+			if eta := download.ETA(d); eta != "" {
 				sub += "  ·  " + eta
 			}
 			it.Sub = bar + "  " + sub
@@ -82,17 +84,17 @@ func (s *downloadsScreen) rebuild() {
 				it.Badge = yell("resumed")
 			}
 
-		case DLQueued:
+		case download.DLQueued:
 			it.Sub = stHint.Render("waiting its turn")
 			it.Badge = grey("queued")
 
-		case DLDone:
-			it.Sub = stHint.Render(fmtBytes(d.Total))
+		case download.DLDone:
+			it.Sub = stHint.Render(format.Bytes(d.Total))
 			it.Badge = good("✓")
 			it.Watched = true
 			it.Dim = true // finished, nothing to do with it
 
-		case DLFailed:
+		case download.DLFailed:
 			// Err is nil for a failure restored from the index — the message
 			// isn't persisted, and calling Error() on nil would panic.
 			msg := "failed · enter to retry"
@@ -102,13 +104,13 @@ func (s *downloadsScreen) rebuild() {
 			it.Sub = stErr.Render(msg)
 			it.Badge = bad("failed")
 
-		case DLCancelled:
+		case download.DLCancelled:
 			// Not dimmed: a stopped download is the one row here you're
 			// likely to want to act on, and greying it made it the hardest
 			// thing on the screen to see.
 			pct := ""
 			if d.Total > 0 {
-				pct = fmt.Sprintf("  ·  %.0f%% of %s", d.Frac()*100, fmtBytes(d.Total))
+				pct = fmt.Sprintf("  ·  %.0f%% of %s", d.Frac()*100, format.Bytes(d.Total))
 			}
 			it.Sub = progressBar(d.Frac(), 20) + stStop.Render("  stopped"+pct)
 			it.Badge = stStop.Render("enter to resume")
@@ -120,7 +122,7 @@ func (s *downloadsScreen) rebuild() {
 
 func (s *downloadsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 	switch m := msg.(type) {
-	case DownloadTickMsg:
+	case download.TickMsg:
 		cur := s.list.Selected()
 		s.rebuild()
 		if cur >= 0 {

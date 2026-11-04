@@ -14,6 +14,7 @@ import (
 	"slices"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/langs"
+	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"strings"
@@ -106,7 +107,7 @@ type PlayRequest struct {
 	URL       string
 	Resume    float64
 	Entry     store.HistoryEntry // written to history when playback starts
-	Queue     *EpQueue           // non-nil for series, drives autoplay
+	Queue     *queue.EpQueue     // non-nil for series, drives autoplay
 	Addons    []stremio.Addon    // needed to resolve the next episode
 
 	// Carried from the chosen stream so the subtitle picker can ask for
@@ -432,7 +433,7 @@ func mpvTitle(req PlayRequest) string {
 			vals["title"] = e.EpTitle
 		}
 	}
-	return strings.Join(expandPattern(mode, vals), " ")
+	return strings.Join(format.ExpandPattern(mode, vals), " ")
 }
 
 // command sends an mpv IPC command and waits for the matching response.

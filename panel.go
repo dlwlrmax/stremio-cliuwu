@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
@@ -45,7 +46,7 @@ type continuePanel struct {
 	w, h   int
 
 	items     []store.ContinueItem
-	downloads []Download
+	downloads []download.Job
 	watched   []store.HistoryEntry
 	next      *store.ContinueItem // what w resumes
 	epVideo   stremio.Video       // episode record, for a series
@@ -329,17 +330,17 @@ func (p *continuePanel) View() string {
 
 			name, status := bold(d.Label), stHint.Render("   ·")
 			switch d.State {
-			case DLActive:
+			case download.DLActive:
 				if d.Total > 0 {
 					status = accent(fmt.Sprintf("%3.0f%%", d.Frac()*100))
 				}
-			case DLQueued:
+			case download.DLQueued:
 				status = stHint.Render("wait")
-			case DLCancelled:
+			case download.DLCancelled:
 				status = stStop.Render("stop")
-			case DLFailed:
+			case download.DLFailed:
 				status = stErr.Render("fail")
-			case DLDone:
+			case download.DLDone:
 				// Greyed with a tick: it's on disk, there's nothing left to
 				// do with it, and it shouldn't compete with the one that's
 				// still running.

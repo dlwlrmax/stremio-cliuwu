@@ -1,4 +1,4 @@
-package main
+package download
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
+	"stremio-cliuwu/internal/stremio"
 	"strings"
 	"sync"
 	"time"
@@ -50,17 +51,17 @@ var downloadClient = &http.Client{
 // sidecar the resume depends on.
 var errStopped = errors.New("stopped")
 
-type DownloadState int
+type State int
 
 const (
-	DLQueued DownloadState = iota
+	DLQueued State = iota
 	DLActive
 	DLDone
 	DLFailed
 	DLCancelled
 )
 
-func (s DownloadState) String() string {
+func (s State) String() string {
 	switch s {
 	case DLActive:
 		return "downloading"
@@ -74,7 +75,7 @@ func (s DownloadState) String() string {
 	return "queued"
 }
 
-type Download struct {
+type Job struct {
 	ID    int
 	Label string
 	URL   string
@@ -84,12 +85,12 @@ type Download struct {
 	Done  int64
 	Speed int64 // bytes/sec, rolling
 
-	State  DownloadState
+	State  State
 	Err    error
 	Resume bool // picked up from a partial file
 }
 
-func (d Download) Frac() float64 {
+func (d Job) Frac() float64 {
 	if d.Total <= 0 {
 		return 0
 	}
@@ -98,8 +99,8 @@ func (d Download) Frac() float64 {
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-type DownloadTickMsg struct{}
-type DownloadDoneMsg struct {
+type TickMsg struct{}
+type DoneMsg struct {
 	Label string
 	Err   error
 }
@@ -143,101 +144,6 @@ func writePartInfo(final string, pi partInfo) {
 
 // ── Naming ────────────────────────────────────────────────────────────────────
 
-// winReserved are DOS device names that Windows still refuses as filenames.
-// A name is reserved on its base alone, so NUL.txt and NUL.tar.gz are both
-// the null device. Windows 11 relaxed most of this, but older versions
-// haven't, and applying it everywhere keeps a synced download folder portable.
-var winReserved = map[string]bool{
-	"con": true, "prn": true, "aux": true, "nul": true,
-	"com0": true, "com1": true, "com2": true, "com3": true, "com4": true,
-	"com5": true, "com6": true, "com7": true, "com8": true, "com9": true,
-	"lpt0": true, "lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true,
-	"lpt5": true, "lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
-}
-
-// safeName strips anything a filesystem would object to. The Windows set is
-// the strictest, so use it everywhere and keep filenames portable.
-func safeName(s string) string {
-	s = strings.Map(func(r rune) rune {
-		switch r {
-		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
-			return '-'
-		}
-		if r < 32 {
-			return -1
-		}
-		return r
-	}, s)
-	// A release name can run past the 255-byte filename limit once the
-	// extension is added. Cut by runes, then re-trim what the cut exposed.
-	if r := []rune(s); len(r) > 120 {
-		s = string(r[:120])
-	}
-	s = strings.TrimSpace(s)
-	s = strings.Trim(s, ".") // leading/trailing dots are stripped by Windows
-	if s == "" {
-		return "untitled"
-	}
-
-	base := s
-	if i := strings.IndexByte(base, '.'); i > 0 {
-		base = base[:i]
-	}
-	if winReserved[strings.ToLower(base)] {
-		s = "_" + s
-	}
-	return s
-}
-
-// extFromURL pulls a file extension off the URL, defaulting to .mkv.
-func extFromURL(raw string) string {
-	if i := strings.IndexAny(raw, "?#"); i >= 0 {
-		raw = raw[:i]
-	}
-	ext := strings.ToLower(filepath.Ext(raw))
-	switch ext {
-	case ".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".webm", ".wmv", ".flv":
-		return ext
-	}
-	return ".mkv"
-}
-
-var spaceRun = regexp.MustCompile(`\s+`)
-
-// tidySegment cleans up after a placeholder resolved to nothing — an absent
-// year would otherwise leave "() Inception" behind.
-func tidySegment(s string) string {
-	for _, empty := range []string{"()", "[]", "{}", "- -"} {
-		s = strings.ReplaceAll(s, empty, "")
-	}
-	s = spaceRun.ReplaceAllString(s, " ")
-	return strings.Trim(s, " -_·.")
-}
-
-func expandPattern(pattern string, vals map[string]string) []string {
-	// Split first, fill in after: a title like "Fate/Zero" must stay one
-	// folder name, not become two. One Replacer pass also means a value that
-	// happens to contain "{year}" is not expanded again.
-	pairs := make([]string, 0, len(vals)*2)
-	for k, v := range vals {
-		pairs = append(pairs, "{"+k+"}", v)
-	}
-	fill := strings.NewReplacer(pairs...)
-
-	// Either separator: a Windows user will reach for a backslash, and
-	// letting it fall through to safeName would turn the folder break into a
-	// literal "-" in the filename.
-	var segs []string
-	for _, seg := range strings.FieldsFunc(pattern, func(r rune) bool {
-		return r == '/' || r == '\\'
-	}) {
-		if seg = tidySegment(fill.Replace(seg)); seg != "" {
-			segs = append(segs, safeName(seg))
-		}
-	}
-	return segs
-}
-
 // LibraryPath is where a file from a debrid library entry lands.
 //
 // These have no meta behind them — no season, no episode, often no clean
@@ -246,39 +152,38 @@ func expandPattern(pattern string, vals map[string]string) []string {
 // of similarly-named files.
 func LibraryPath(root, pack, rel string) string {
 	if !store.CfgNow().DownloadFolders {
-		return filepath.Join(root, safeName(baseName(rel)))
+		return filepath.Join(root, format.SafeName(format.BaseName(rel)))
 	}
 
 	parts := []string{root}
 	if pack != "" {
-		parts = append(parts, safeName(pack))
+		parts = append(parts, format.SafeName(pack))
 	}
 	for _, seg := range strings.Split(rel, "/") {
-		if seg = safeName(seg); seg != "" {
+		if seg = format.SafeName(seg); seg != "" {
 			parts = append(parts, seg)
 		}
 	}
 	return filepath.Join(parts...)
 }
 
-// DownloadPath works out where a stream should land.
-func DownloadPath(root string, t streamTarget, url string) string {
-	ext := extFromURL(url)
+// Path works out where a stream should land.
+func Path(root string, meta stremio.Meta, label string, q *queue.EpQueue, url string) string {
+	ext := format.ExtFromURL(url)
 
 	var segs []string
-	if t.Queue == nil {
-		name := t.Meta.Name
+	if q == nil {
+		name := meta.Name
 		if name == "" {
-			name = t.Label
+			name = label
 		}
-		segs = expandPattern(store.CfgNow().MoviePattern, map[string]string{
+		segs = format.ExpandPattern(store.CfgNow().MoviePattern, map[string]string{
 			"title": name,
-			"year":  t.Meta.Year,
+			"year":  meta.Year,
 		})
 	} else {
-		q := t.Queue
 		v := q.Episodes[q.Index]
-		segs = expandPattern(store.CfgNow().EpisodePattern, map[string]string{
+		segs = format.ExpandPattern(store.CfgNow().EpisodePattern, map[string]string{
 			"show":    q.Show.Name,
 			"season":  fmt.Sprintf("%02d", q.Season),
 			"episode": fmt.Sprintf("%02d", v.Episode),
@@ -338,7 +243,7 @@ func (d *Downloader) Load() {
 	defer d.mu.Unlock()
 
 	for _, r := range idx.Items {
-		dl := &Download{Label: r.Label, Path: r.Path}
+		dl := &Job{Label: r.Label, Path: r.Path}
 
 		// Disk decides the state. An index that says "active" just means the
 		// last run was killed mid-download.
@@ -398,7 +303,7 @@ func (d *Downloader) save() {
 
 type Downloader struct {
 	mu      sync.Mutex
-	items   []*Download
+	items   []*Job
 	seq     int
 	running bool
 	cancel  map[int]bool
@@ -410,7 +315,7 @@ type Downloader struct {
 	prog *tea.Program
 }
 
-func NewDownloader() *Downloader {
+func New() *Downloader {
 	return &Downloader{cancel: map[int]bool{}, abort: map[int]context.CancelFunc{}}
 }
 
@@ -473,7 +378,7 @@ func (d *Downloader) Add(label, url, path string) (string, bool) {
 	}
 
 	d.seq++
-	dl := &Download{ID: d.seq, Label: label, URL: url, Path: path, State: DLQueued}
+	dl := &Job{ID: d.seq, Label: label, URL: url, Path: path, State: DLQueued}
 	d.items = append(d.items, dl)
 
 	start := !d.running
@@ -531,10 +436,10 @@ func (d *Downloader) Scan(root string) int {
 		if !known {
 			label := pi.Label
 			if label == "" {
-				label = baseName(final)
+				label = format.BaseName(final)
 			}
 			d.seq++
-			d.items = append(d.items, &Download{
+			d.items = append(d.items, &Job{
 				ID: d.seq, Label: label, URL: pi.URL, Path: final,
 				Total: pi.Total, Done: fi.Size(),
 				State: DLCancelled, Resume: true,
@@ -579,11 +484,11 @@ func (d *Downloader) Resume(id int) bool {
 	return true
 }
 
-func (d *Downloader) Snapshot() []Download {
+func (d *Downloader) Snapshot() []Job {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	out := make([]Download, len(d.items))
+	out := make([]Job, len(d.items))
 	for i, it := range d.items {
 		out[i] = *it
 	}
@@ -591,7 +496,7 @@ func (d *Downloader) Snapshot() []Download {
 }
 
 // Active returns the download in progress, if any.
-func (d *Downloader) Active() (Download, bool) {
+func (d *Downloader) Active() (Job, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -600,7 +505,7 @@ func (d *Downloader) Active() (Download, bool) {
 			return *it, true
 		}
 	}
-	return Download{}, false
+	return Job{}, false
 }
 
 func (d *Downloader) Pending() int {
@@ -722,7 +627,7 @@ func (d *Downloader) Clear() int {
 	return gone
 }
 
-func (d *Downloader) next() *Download {
+func (d *Downloader) next() *Job {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -762,13 +667,13 @@ func (d *Downloader) worker() {
 
 		d.save()
 		if state != DLCancelled {
-			d.emit(DownloadDoneMsg{Label: label, Err: err})
+			d.emit(DoneMsg{Label: label, Err: err})
 		}
-		d.emit(DownloadTickMsg{})
+		d.emit(TickMsg{})
 	}
 }
 
-func (d *Downloader) fetch(dl *Download) error {
+func (d *Downloader) fetch(dl *Job) error {
 	if err := os.MkdirAll(filepath.Dir(dl.Path), 0755); err != nil {
 		return err
 	}
@@ -873,7 +778,7 @@ func (d *Downloader) fetch(dl *Download) error {
 		dir := filepath.Dir(dl.Path)
 		if avail, ok := freeSpace(dir); ok && avail < uint64(need) {
 			return fmt.Errorf("not enough space in %s — %s free, needs %s",
-				dir, fmtBytes(int64(avail)), fmtBytes(need))
+				dir, format.Bytes(int64(avail)), format.Bytes(need))
 		}
 	}
 
@@ -905,7 +810,7 @@ func (d *Downloader) fetch(dl *Download) error {
 	d.mu.Unlock()
 	if want > 0 && got < want {
 		return fmt.Errorf("connection ended early at %s of %s — enter to resume",
-			fmtBytes(got), fmtBytes(want))
+			format.Bytes(got), format.Bytes(want))
 	}
 
 	// Rename only once the bytes are all there, so a half file never looks
@@ -917,7 +822,7 @@ func (d *Downloader) fetch(dl *Download) error {
 	return nil
 }
 
-func (d *Downloader) copy(dl *Download, dst io.Writer, src io.Reader) error {
+func (d *Downloader) copy(dl *Job, dst io.Writer, src io.Reader) error {
 	buf := make([]byte, 256*1024)
 
 	lastEmit := time.Now()
@@ -952,7 +857,7 @@ func (d *Downloader) copy(dl *Download, dst io.Writer, src io.Reader) error {
 			lastBytes = dl.Done
 			d.mu.Unlock()
 			lastEmit = time.Now()
-			d.emit(DownloadTickMsg{})
+			d.emit(TickMsg{})
 		}
 
 		if rerr == io.EOF {
@@ -975,22 +880,7 @@ func (d *Downloader) copy(dl *Download, dst io.Writer, src io.Reader) error {
 
 // ── Formatting ────────────────────────────────────────────────────────────────
 
-// fmtBytes uses decimal units, as the addons and the Stremio app do — in
-// binary a 37.3 GB file reads as 34.7, and the two never agree.
-func fmtBytes(n int64) string {
-	const unit = 1000
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit && exp < 3; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
-}
-
-func fmtETA(d Download) string {
+func ETA(d Job) string {
 	if d.Speed <= 0 || d.Total <= 0 || d.Done >= d.Total {
 		return ""
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/paths"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
@@ -119,7 +120,7 @@ func main() {
 
 	store.PublishCfg(cfg)
 	player := NewPlayer(cfg)
-	downloader := NewDownloader()
+	downloader := download.New()
 	ctx = &appCtx{
 		cfg:        cfg,
 		refs:       refs,

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
@@ -67,8 +68,8 @@ func QueueEntry(m stremio.Meta) (string, bool) {
 			continue
 		}
 		rel := strings.TrimPrefix(paths[i], prefix)
-		path := LibraryPath(ctx.cfg.DownloadDir, m.Name, rel)
-		if _, ok := ctx.downloader.Add(baseName(rel), v.URL(), path); ok {
+		path := download.LibraryPath(ctx.cfg.DownloadDir, m.Name, rel)
+		if _, ok := ctx.downloader.Add(format.BaseName(rel), v.URL(), path); ok {
 			queued++
 		}
 	}
@@ -109,14 +110,6 @@ func FetchFiles(m stremio.Meta) ([]FileVideo, error) {
 // "<torrent name>/Season 01/Family Guy - S01E01.mp4". Treating only the first
 // segment as "the folder" grouped everything under the torrent name, which is
 // already the breadcrumb, and left "Season 01/" glued to every filename.
-
-func baseName(p string) string {
-	p = strings.TrimSuffix(p, "/")
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[i+1:]
-	}
-	return p
-}
 
 // commonDirPrefix finds the directory prefix shared by every path, so the
 // torrent-name wrapper doesn't become a folder you have to click through.
@@ -263,7 +256,7 @@ type fileRow struct {
 // collide on the same key under the entry.
 func (s *fileListScreen) request(idx int) PlayRequest {
 	v := s.videos[idx]
-	file := baseName(v.Title)
+	file := format.BaseName(v.Title)
 
 	name := s.meta.Name
 	if name == "" {
@@ -340,8 +333,8 @@ func (s *fileListScreen) queue(picked []int) tea.Cmd {
 			skipped++
 			continue
 		}
-		path := LibraryPath(ctx.cfg.DownloadDir, s.meta.Name, s.rel[i])
-		if _, ok := ctx.downloader.Add(baseName(s.rel[i]), v.URL(), path); ok {
+		path := download.LibraryPath(ctx.cfg.DownloadDir, s.meta.Name, s.rel[i])
+		if _, ok := ctx.downloader.Add(format.BaseName(s.rel[i]), v.URL(), path); ok {
 			queued++
 		} else {
 			skipped++
@@ -354,7 +347,7 @@ func (s *fileListScreen) queue(picked []int) tea.Cmd {
 	case queued == 0:
 		return toastErr("no files there")
 	case queued == 1:
-		return toast("queued " + baseName(s.rel[picked[0]]))
+		return toast("queued " + format.BaseName(s.rel[picked[0]]))
 	}
 	return toast(fmt.Sprintf("queued %d files", queued))
 }
@@ -431,9 +424,9 @@ func (s *fileListScreen) rebuild() {
 			}
 			continue
 		}
-		it := Item{Label: bold(baseName(r.name))}
+		it := Item{Label: bold(format.BaseName(r.name))}
 		if s.flat {
-			if d := strings.TrimSuffix(strings.TrimSuffix(r.name, baseName(r.name)), "/"); d != "" {
+			if d := strings.TrimSuffix(strings.TrimSuffix(r.name, format.BaseName(r.name)), "/"); d != "" {
 				it.Sub = d
 			}
 		}

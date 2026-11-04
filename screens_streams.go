@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"sort"
+	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/streams"
 	"stremio-cliuwu/internal/stremio"
@@ -40,7 +42,7 @@ type streamTarget struct {
 	StreamID  string // what stream addons are asked for; VideoID when empty
 	Label     string
 	Resume    float64
-	Queue     *EpQueue // nil for movies
+	Queue     *queue.EpQueue // nil for movies
 }
 
 type streamScreen struct {
@@ -538,7 +540,7 @@ func (s *streamScreen) download(st stremio.Stream) tea.Cmd {
 		return toastErr("that stream has no url")
 	}
 
-	path := DownloadPath(ctx.cfg.DownloadDir, s.target, st.URL)
+	path := download.Path(ctx.cfg.DownloadDir, s.target.Meta, s.target.Label, s.target.Queue, st.URL)
 	msg, ok := ctx.downloader.Add(s.target.Label, st.URL, path)
 	if !ok {
 		return toastErr(msg)

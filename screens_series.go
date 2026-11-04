@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"stremio-cliuwu/internal/format"
+	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 
@@ -511,7 +512,7 @@ func (s *episodeScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				// Record what follows, same as playing it would. The full
 				// video list is right here, so next-up works from a marked
 				// episode rather than only from a played one.
-				q := EpQueue{Show: s.show, Season: s.season, Episodes: s.eps, Index: i, All: s.sm.Videos}
+				q := queue.EpQueue{Show: s.show, Season: s.season, Episodes: s.eps, Index: i, All: s.sm.Videos}
 				if n, season, ok := q.Upcoming(); ok {
 					e.NextVideoID = n.ID
 					e.NextSeason = season
@@ -567,7 +568,7 @@ func (s *episodeScreen) streamFor(i int, resume float64) screen {
 		StreamID:  v.StreamID(),
 		Label:     s.show.Name + " · " + format.Ep(v.Season, v.Episode, v.ID),
 		Resume:    resume,
-		Queue: &EpQueue{
+		Queue: &queue.EpQueue{
 			Show: s.show, Season: s.season, Episodes: s.eps, Index: i,
 			All: s.sm.Videos,
 		},

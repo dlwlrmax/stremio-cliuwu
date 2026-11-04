@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
@@ -22,7 +23,7 @@ type appCtx struct {
 	refs       stremio.AddonList
 	addons     []stremio.Addon
 	player     *Player
-	downloader *Downloader
+	downloader *download.Downloader
 	prog       *tea.Program
 
 	loading bool // manifests still being fetched
@@ -191,13 +192,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PlayerNoticeMsg:
 		return a, toast(m.Text)
 
-	case DownloadTickMsg:
+	case download.TickMsg:
 		next, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = next
 		a.resize()
 		return a, cmd
 
-	case DownloadDoneMsg:
+	case download.DoneMsg:
 		if m.Err != nil {
 			return a, toastErr("download failed — " + m.Err.Error())
 		}
@@ -655,9 +656,9 @@ func (a *app) downloadBar() string {
 		return " " + stHint.Render(fmt.Sprintf("%d download(s) queued", ctx.downloader.Pending()))
 	}
 
-	right := fmt.Sprintf("%s / %s", fmtBytes(d.Done), fmtBytes(d.Total))
+	right := fmt.Sprintf("%s / %s", format.Bytes(d.Done), format.Bytes(d.Total))
 	if d.Speed > 0 {
-		right += "  " + fmtBytes(d.Speed) + "/s"
+		right += "  " + format.Bytes(d.Speed) + "/s"
 	}
 	if n := ctx.downloader.Pending(); n > 1 {
 		right = fmt.Sprintf("+%d  ", n-1) + right

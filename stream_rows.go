@@ -160,7 +160,7 @@ func FmtStream(in streamInfo, o rowOpts) string {
 	}
 	size := ""
 	if in.Bytes > 0 {
-		size = fmtBytes(in.Bytes)
+		size = format.Bytes(in.Bytes)
 	}
 
 	// The runtime is quiet unless it says something: a copy more than a
