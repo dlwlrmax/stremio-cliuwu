@@ -1,0 +1,210 @@
+package subsync
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+const srtBody = "1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+const vttBody = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n"
+
+// fakeAlass installs a shell script as alass-cli and points lookPath at it.
+func fakeAlass(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "alass-cli")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := lookPath
+	lookPath = func(name string) (string, error) {
+		if name == "alass-cli" {
+			return bin, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Cleanup(func() { lookPath = old })
+}
+
+func server(t *testing.T, routes map[string]string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	for path, body := range routes {
+		body := body
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) })
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestSyncSuccess(t *testing.T) {
+	t.Cleanup(Cleanup)
+	fakeAlass(t, `cp "$2" "$3"`)
+	srv := server(t, map[string]string{"/ref.srt": srtBody, "/sub.vtt": vttBody})
+
+	out, err := Sync(context.Background(), srv.URL+"/ref.srt", srv.URL+"/sub.vtt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !Owns(out) {
+		t.Errorf("Owns(%q) = false, want true", out)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "00:00:01,000 --> 00:00:02,000") {
+		t.Errorf("alass saw unconverted WebVTT, output:\n%s", got)
+	}
+	// Only the result is kept; the downloaded inputs are gone.
+	entries, _ := os.ReadDir(filepath.Dir(out))
+	if len(entries) != 1 || entries[0].Name() != "out.srt" {
+		t.Errorf("want only out.srt left behind, got %v", entries)
+	}
+}
+
+func TestSyncNoAlass(t *testing.T) {
+	t.Cleanup(Cleanup)
+	old := lookPath
+	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(func() { lookPath = old })
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+
+	_, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+	if !errors.Is(err, ErrNoAlass) {
+		t.Errorf("err = %v, want ErrNoAlass", err)
+	}
+}
+
+func TestSyncTooLarge(t *testing.T) {
+	t.Cleanup(Cleanup)
+	marker := filepath.Join(t.TempDir(), "ran")
+	fakeAlass(t, "touch "+marker)
+	srv := server(t, map[string]string{
+		"/ref":   srtBody,
+		"/big":   strings.Repeat("x", 4<<20+1),
+		"/exact": strings.Repeat("x", 4<<20),
+	})
+
+	_, err := Sync(context.Background(), srv.URL+"/ref", srv.URL+"/big")
+	if !errors.Is(err, ErrTooLarge) {
+		t.Errorf("err = %v, want ErrTooLarge", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("alass ran even though a body was too large")
+	}
+	// Exactly at the cap is allowed through to alass.
+	if _, err := Sync(context.Background(), srv.URL+"/ref", srv.URL+"/exact"); errors.Is(err, ErrTooLarge) {
+		t.Error("a body of exactly 4 MB must not be ErrTooLarge")
+	}
+}
+
+func TestSyncAlassErrorOnStdout(t *testing.T) {
+	t.Cleanup(Cleanup)
+	fakeAlass(t, `printf "error: parsing failed\ncaused by: bad digit\n\nnot: run with environment variable 'RUST_BACKTRACE=1'\n"; exit 1`)
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+
+	_, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "caused by: bad digit") {
+		t.Errorf("error %q does not carry alass's reason", err)
+	}
+	if strings.Contains(err.Error(), "RUST_BACKTRACE") {
+		t.Errorf("error %q still has the backtrace hint", err)
+	}
+}
+
+func TestSyncHTTPStatus(t *testing.T) {
+	t.Cleanup(Cleanup)
+	fakeAlass(t, `cp "$2" "$3"`)
+	srv := server(t, map[string]string{"/ok": srtBody})
+
+	_, err := Sync(context.Background(), srv.URL+"/ok", srv.URL+"/missing")
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Errorf("err = %v, want it to mention 404", err)
+	}
+}
+
+func TestSyncCancelled(t *testing.T) {
+	t.Cleanup(Cleanup)
+	fakeAlass(t, "exec sleep 30")
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	done := make(chan error, 1)
+	go func() { _, err := Sync(ctx, srv.URL+"/a", srv.URL+"/b"); done <- err }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled in the chain", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Sync did not return after cancel")
+	}
+}
+
+func TestOwns(t *testing.T) {
+	Cleanup()
+	t.Cleanup(Cleanup)
+	if Owns("/etc/passwd") {
+		t.Error("Owns is true before any temp directory exists")
+	}
+
+	fakeAlass(t, `cp "$2" "$3"`)
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+	out, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !Owns(out) {
+		t.Fatalf("Owns(%q) = false", out)
+	}
+
+	dir := filepath.Dir(out)
+	if err := os.Symlink("/etc", filepath.Join(dir, "dirlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(dir, "filelink")); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"dot-dot escape":       dir + "/../../x", // dir is <root>/s-N, so this is outside <root>
+		"outside absolute":     "/etc/passwd",
+		"relative":             "../x.srt",
+		"through dir symlink":  filepath.Join(dir, "dirlink", "passwd"),
+		"file symlink":         filepath.Join(dir, "filelink"),
+		"the directory itself": filepath.Dir(dir),
+	} {
+		if Owns(path) {
+			t.Errorf("%s: Owns(%q) = true, want false", name, path)
+		}
+	}
+}
+
+func TestCleanup(t *testing.T) {
+	fakeAlass(t, `cp "$2" "$3"`)
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+	out, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	Cleanup()
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("output still exists after Cleanup: %v", err)
+	}
+	Cleanup() // a second call, and one with nothing created, must not panic
+}
