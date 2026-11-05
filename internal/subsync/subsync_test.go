@@ -208,3 +208,48 @@ func TestCleanup(t *testing.T) {
 	}
 	Cleanup() // a second call, and one with nothing created, must not panic
 }
+
+// The fakes above can't tell whether the real tool is called correctly, so
+// this one runs it. Skipped where alass-cli isn't installed.
+func TestSyncRealAlass(t *testing.T) {
+	if _, err := exec.LookPath("alass-cli"); err != nil {
+		t.Skip("alass-cli not installed")
+	}
+	t.Cleanup(Cleanup)
+
+	// Irregular spacing, so there is only one alignment that fits.
+	gaps := []int{3, 7, 2, 11, 4, 9, 5, 13, 2, 8, 6, 10, 3, 12, 4, 7, 9, 5, 14, 3}
+	build := func(offsetMs int, vtt bool) string {
+		var b strings.Builder
+		if vtt {
+			b.WriteString("WEBVTT\n\n")
+		}
+		at := 10_000
+		for i, g := range gaps {
+			at += g * 1000
+			ts := func(ms int) string {
+				sep := ","
+				if vtt {
+					sep = "."
+				}
+				return fmt.Sprintf("%02d:%02d:%02d%s%03d", ms/3600000, ms/60000%60, ms/1000%60, sep, ms%1000)
+			}
+			if !vtt {
+				fmt.Fprintf(&b, "%d\n", i+1)
+			}
+			fmt.Fprintf(&b, "%s --> %s\nline %d\n\n", ts(at+offsetMs), ts(at+offsetMs+1500), i)
+		}
+		return b.String()
+	}
+	// The subtitle is WebVTT, shifted 6 s late, and served under a .srt name.
+	srv := server(t, map[string]string{"/ref.srt": build(0, false), "/sub.srt": build(6000, true)})
+
+	out, err := Sync(context.Background(), srv.URL+"/ref.srt", srv.URL+"/sub.srt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(out)
+	if !strings.Contains(string(got), "00:00:13,000 --> 00:00:14,500") {
+		t.Errorf("first cue not pulled back to the reference timing (13.000 s):\n%.200s", got)
+	}
+}

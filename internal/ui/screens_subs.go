@@ -1,12 +1,15 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
+	"stremio-cliuwu/internal/subsync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,6 +22,14 @@ import (
 type subsLoadedMsg struct {
 	id   asyncID
 	subs []stremio.Subtitle
+}
+
+// subSyncedMsg is the result of syncing one subtitle to the reference.
+type subSyncedMsg struct {
+	id   asyncID
+	sub  stremio.Subtitle // the row that was synced
+	path string           // the retimed file, inside the subsync temp dir
+	err  error
 }
 
 type subsScreen struct {
@@ -41,6 +52,15 @@ type subsScreen struct {
 
 	langs  []string // "all" plus each language present
 	langIx int
+
+	// Syncing: m marks a well-timed sub as the reference, S retimes the
+	// highlighted one to it. The reference lives as long as this screen.
+	ref        *stremio.Subtitle
+	syncing    bool
+	syncCancel context.CancelFunc
+	// synced maps a retimed file's path back to the row it came from, so that
+	// row is the one marked "on" once mpv has loaded the file.
+	synced map[string]string
 }
 
 func newSubsScreen(label string, q stremio.SubsQuery, shipped []stremio.Subtitle, showID string) *subsScreen {
@@ -88,7 +108,7 @@ func (s *subsScreen) Init() tea.Cmd {
 }
 
 func (s *subsScreen) Footer() string {
-	pairs := [][2]string{{"enter", "try"}, {"0-9", "jump"}}
+	pairs := [][2]string{{"enter", "try"}, {"m", "mark reference"}, {"S", "sync to it"}, {"0-9", "jump"}}
 	if len(s.langs) > 2 {
 		pairs = append(pairs, [2]string{"tab", "filter by language"})
 	}
@@ -156,6 +176,9 @@ func (s *subsScreen) rebuild() {
 		badge := grey(sub.Addon)
 		if sub.URL == s.active {
 			badge = good("✓ on") + "  " + badge
+		}
+		if s.ref != nil && sub.URL == s.ref.URL {
+			badge = good("● ref") + "  " + badge
 		}
 
 		items = append(items, Item{
@@ -232,7 +255,35 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		s.rebuild()
 		return s, nil
 
+	case subSyncedMsg:
+		if m.id != s.id {
+			return s, nil
+		}
+		s.syncing = false
+		s.syncCancel = nil
+		if m.err != nil {
+			switch {
+			case errors.Is(m.err, subsync.ErrNoAlass):
+				return s, toastErr("alass not found — install alass-cli")
+			case errors.Is(m.err, context.Canceled):
+				return s, nil
+			}
+			return s, toastErr("sync failed: " + m.err.Error())
+		}
+		if s.synced == nil {
+			s.synced = map[string]string{}
+		}
+		s.synced[m.path] = m.sub.URL
+		sub := m.sub
+		s.pending = &sub
+		return s, ctx.player.AddLocalSubtitle(m.path, langs.Name(m.sub.Lang), m.sub.Lang)
+
 	case player.SubtitleAddedMsg:
+		// A synced file arrives under its local path; everything below works
+		// in terms of the row it came from.
+		if origin, ok := s.synced[m.URL]; ok {
+			m.URL = origin
+		}
 		if m.Err != nil {
 			return s, toastErr("mpv couldn't load that one — try another")
 		}
@@ -288,7 +339,47 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				toast("loading "+langs.Name(sub.Lang)+" subtitles…"),
 			)
 
+		case "m":
+			i := s.list.Selected()
+			if i < 0 || i >= len(s.shown) {
+				return s, nil
+			}
+			sub := s.subs[s.shown[i]]
+			if s.ref != nil && s.ref.URL == sub.URL {
+				s.ref = nil
+			} else {
+				s.ref = &sub
+			}
+			s.rebuild()
+			s.list.Focus(i)
+			return s, nil
+
+		case "S":
+			if s.syncing {
+				return s, nil
+			}
+			i := s.list.Selected()
+			if i < 0 || i >= len(s.shown) {
+				return s, nil
+			}
+			sub := s.subs[s.shown[i]]
+			if s.ref == nil {
+				return s, toastErr("mark a well-timed sub first (m)")
+			}
+			if sub.URL == s.ref.URL {
+				return s, toastErr("pick a different sub to sync")
+			}
+			cctx, cancel := context.WithCancel(context.Background())
+			s.syncing, s.syncCancel = true, cancel
+			id, ref := s.id, *s.ref
+			run := func() tea.Msg {
+				path, err := subsync.Sync(cctx, ref.URL, sub.URL)
+				return subSyncedMsg{id: id, sub: sub, path: path, err: err}
+			}
+			return s, tea.Batch(toast("syncing…"), run)
+
 		case "R":
+			s.cancelSync()
 			stremio.DropSubsCache(s.query)
 			s.loaded = false
 			s.id = newAsyncID()
@@ -312,12 +403,24 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, toast("subtitle preference cleared — using global")
 			}
 		case "esc", "backspace":
+			s.cancelSync()
 			return s, pop()
 		case "q":
+			s.cancelSync()
 			return s, popRoot()
 		}
 	}
 	return s, s.busy.update(msg)
+}
+
+// cancelSync stops a running sync, so leaving the screen doesn't leave alass
+// working on a result nobody will look at.
+func (s *subsScreen) cancelSync() {
+	if s.syncCancel != nil {
+		s.syncCancel()
+		s.syncCancel = nil
+	}
+	s.syncing = false
 }
 
 func (s *subsScreen) View() string {

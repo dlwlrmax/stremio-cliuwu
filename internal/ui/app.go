@@ -396,6 +396,11 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 			return ctx.player.Stop(), true
 		}
 	case "S":
+		// The subtitle list has its own S (sync to the reference). Global keys
+		// run first, so without this it would open a second list on top.
+		if _, here := a.top().(*subsScreen); here {
+			return nil, false
+		}
 		// Global on purpose: you realise you want subtitles a minute into an
 		// episode, by which point the stream list is several screens back.
 		if now := ctx.player.Now(); now != nil {

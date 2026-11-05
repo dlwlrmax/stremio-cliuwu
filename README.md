@@ -130,6 +130,12 @@ off by default under settings; they're block art, so temper expectations.
 serves them. It opens on whatever you've set as your subtitle language —
 that setting takes a list, so `eng, en, English` all count as English.
 
+If a subtitle is out of time with the video, press `m` on one that's well
+timed to mark it as the reference, then `S` on the mistimed one to retime it
+to match. Only the two subtitle files are downloaded, never the video. This
+needs [alass](https://github.com/kaegi/alass) (`alass-cli`) on your PATH; the
+rest of the app doesn't.
+
 **`D` downloads a stream.** One at a time, resumable, into a folder layout you
 can change in settings. Progress shows at the bottom wherever you are.
 
@@ -178,6 +184,7 @@ internal/
   player/          mpv IPC: playback, subtitle/audio autoload, per-show prefs applied
   store/           config, history, favourites, subtitle prefs, account sync
   stremio/         protocol types and the addon / catalog / stream / subtitle client
+  subsync/         retiming one subtitle to another with alass
   streams/         stream ranking, block terms, name parsing
   download/        the download worker and where files land
   queue/           the episode queue autoplay advances through
