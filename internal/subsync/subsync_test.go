@@ -253,3 +253,67 @@ func TestSyncRealAlass(t *testing.T) {
 		t.Errorf("first cue not pulled back to the reference timing (13.000 s):\n%.200s", got)
 	}
 }
+
+// A host that answers 200 with a web page or nothing is the likely way a
+// download goes wrong, and alass's own message for it ("invalid digit found in
+// string") says nothing useful. These are refused before alass runs.
+func TestSyncRefusesNonSubtitleBodies(t *testing.T) {
+	cases := []struct {
+		name, body, want string
+	}{
+		{"html page", "<!DOCTYPE html><html><body>Rate limited</body></html>", "web page"},
+		{"html page after whitespace and BOM", "\xef\xbb\xbf  \n<html></html>", "web page"},
+		{"empty", "", "empty"},
+		{"whitespace only", " \r\n\t\n", "empty"},
+		{"webvtt with no cues", "WEBVTT\n\nNOTE only a comment\n", "no cues"},
+	}
+	for _, c := range cases {
+		for _, side := range []string{"ref", "sub"} {
+			t.Run(c.name+"/"+side, func(t *testing.T) {
+				t.Cleanup(Cleanup)
+				marker := filepath.Join(t.TempDir(), "ran")
+				fakeAlass(t, "touch "+marker)
+				srv := server(t, map[string]string{"/good": srtBody, "/bad": c.body})
+				refURL, subURL := srv.URL+"/good", srv.URL+"/bad"
+				wantSide := "subtitle:"
+				if side == "ref" {
+					refURL, subURL = subURL, refURL
+					wantSide = "reference subtitle:"
+				}
+
+				_, err := Sync(context.Background(), refURL, subURL)
+				if err == nil || !strings.Contains(err.Error(), c.want) {
+					t.Fatalf("err = %v, want it to contain %q", err, c.want)
+				}
+				if !strings.Contains(err.Error(), wantSide) {
+					t.Errorf("err = %v, want it to say which file was bad (%q)", err, wantSide)
+				}
+				if _, statErr := os.Stat(marker); statErr == nil {
+					t.Error("alass ran on a body that is not a subtitle")
+				}
+			})
+		}
+	}
+}
+
+// alass prints a chain of "caused by:" lines, innermost last. The innermost on
+// its own ("invalid digit found in string") is the least informative; the line
+// above it says what was expected and what was found.
+func TestSyncAlassErrorKeepsTheChain(t *testing.T) {
+	t.Cleanup(Cleanup)
+	fakeAlass(t, `printf "error: parsing subtitle file '/tmp/x/sub.srt' failed\ncaused by: parsing the subtitle data failed\ncaused by: expected SubRip index line, found 'Hello'\ncaused by: invalid digit found in string\n\nnot: run with environment variable 'RUST_BACKTRACE=1'\n"; exit 1`)
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+
+	_, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{"expected SubRip index line, found 'Hello'", "invalid digit found in string"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q is missing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "RUST_BACKTRACE") {
+		t.Errorf("error %q still has the backtrace hint", err)
+	}
+}

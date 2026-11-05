@@ -1,6 +1,7 @@
 package subsync
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -111,6 +112,18 @@ func Sync(ctx context.Context, refURL, subURL string) (string, error) {
 		return "", fmt.Errorf("subtitle: %w", err)
 	}
 
+	// Checked before anything is written or run: alass's own complaint about
+	// a web page or an empty file ("invalid digit found in string") does not
+	// say which file was wrong, or that it was never a subtitle at all.
+	refSRT, err := normalise(ref)
+	if err != nil {
+		return "", fmt.Errorf("reference subtitle: %w", err)
+	}
+	subSRT, err := normalise(sub)
+	if err != nil {
+		return "", fmt.Errorf("subtitle: %w", err)
+	}
+
 	root, err := tempDir()
 	if err != nil {
 		return "", err
@@ -122,10 +135,10 @@ func Sync(ctx context.Context, refURL, subURL string) (string, error) {
 	refPath := filepath.Join(work, "ref.srt")
 	subPath := filepath.Join(work, "sub.srt")
 	outPath := filepath.Join(work, "out.srt")
-	if err := os.WriteFile(refPath, ToSRT(ref), 0o600); err != nil {
+	if err := os.WriteFile(refPath, refSRT, 0o600); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(subPath, ToSRT(sub), 0o600); err != nil {
+	if err := os.WriteFile(subPath, subSRT, 0o600); err != nil {
 		return "", err
 	}
 
@@ -140,8 +153,8 @@ func Sync(ctx context.Context, refURL, subURL string) (string, error) {
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("sync cancelled: %w", ctx.Err())
 		}
-		if line := lastLine(string(out)); line != "" {
-			return "", fmt.Errorf("alass: %s", line)
+		if msg := lastLines(string(out), 3); msg != "" {
+			return "", fmt.Errorf("alass: %s", msg)
 		}
 		return "", fmt.Errorf("alass: %w", runErr)
 	}
@@ -184,15 +197,36 @@ func fetch(ctx context.Context, url string) ([]byte, error) {
 	return body, nil
 }
 
-// lastLine is the last non-empty line of a tool's output that isn't the
-// "run with RUST_BACKTRACE" hint, which is the part that says what went wrong.
-func lastLine(s string) string {
+// lastLines is the tail of a tool's output, without the "run with
+// RUST_BACKTRACE" hint, joined into one line. alass prints a chain of "caused
+// by:" lines with the innermost last, and the innermost alone is usually the
+// least useful: the line above it says what was expected and what was found.
+func lastLines(s string, n int) string {
 	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
+	var keep []string
+	for i := len(lines) - 1; i >= 0 && len(keep) < n; i-- {
 		l := strings.TrimSpace(lines[i])
 		if l != "" && !strings.Contains(l, "RUST_BACKTRACE") {
-			return l
+			keep = append([]string{l}, keep...)
 		}
 	}
-	return ""
+	return strings.Join(keep, " — ")
+}
+
+// normalise turns a downloaded body into SubRip, or says why it can't be a
+// subtitle. Hosts answer 200 with a rate-limit page or nothing at all often
+// enough that this is worth saying in plain words.
+func normalise(raw []byte) ([]byte, error) {
+	body := bytes.TrimSpace(bytes.TrimPrefix(raw, utf8BOM))
+	switch {
+	case len(body) == 0:
+		return nil, errors.New("empty file")
+	case body[0] == '<':
+		return nil, errors.New("looks like a web page, not a subtitle")
+	}
+	out := ToSRT(raw)
+	if bytes.HasPrefix(body, []byte("WEBVTT")) && len(bytes.TrimSpace(out)) == 0 {
+		return nil, errors.New("WebVTT file has no cues")
+	}
+	return out, nil
 }
