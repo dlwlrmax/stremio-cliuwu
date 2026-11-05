@@ -73,3 +73,22 @@ func TestMpvLangList(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// A synced subtitle is a local file, and mpv will open whatever path it is
+// given. Only files the app generated into its own temp directory may go in:
+// a path from anywhere else is refused before mpv hears about it.
+func TestAddLocalSubtitleRejectsForeignPath(t *testing.T) {
+	p := &Player{} // rejection happens before any IPC, so no mpv is needed
+	for _, path := range []string{"/etc/passwd", "../x.srt", "x.srt", ""} {
+		msg, ok := p.AddLocalSubtitle(path, "x", "eng")().(SubtitleAddedMsg)
+		if !ok {
+			t.Fatalf("%q: want a SubtitleAddedMsg", path)
+		}
+		if msg.Err == nil {
+			t.Errorf("%q: accepted, want an error", path)
+		}
+		if msg.URL != path {
+			t.Errorf("%q: msg.URL = %q, want the path echoed back", path, msg.URL)
+		}
+	}
+}

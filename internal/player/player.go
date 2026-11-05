@@ -17,6 +17,7 @@ import (
 	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
+	"stremio-cliuwu/internal/subsync"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -227,6 +228,25 @@ func (p *Player) AddSubtitle(url, title, lang string) tea.Cmd {
 		// negative rather than a failure.
 		_, err := p.commandWait(30*time.Second, "sub-add", url, "select", title, lang)
 		return SubtitleAddedMsg{URL: url, Title: title, Err: err}
+	}
+}
+
+// AddLocalSubtitle loads a subtitle file the app generated into the running
+// file and selects it. Unlike AddSubtitle it takes a local path, so it only
+// accepts files inside the subsync temp directory: mpv opens whatever it is
+// handed, and nothing outside what the app wrote itself should be.
+//
+// The message's URL is the path, which is how the picker finds it again.
+func (p *Player) AddLocalSubtitle(path, title, lang string) tea.Cmd {
+	return func() tea.Msg {
+		if !subsync.Owns(path) {
+			return SubtitleAddedMsg{URL: path, Title: title, Err: errors.New("subtitle file is not one the app generated")}
+		}
+		if title == "" {
+			title = "subtitle"
+		}
+		_, err := p.commandWait(30*time.Second, "sub-add", path, "select", title, lang)
+		return SubtitleAddedMsg{URL: path, Title: title, Err: err}
 	}
 }
 

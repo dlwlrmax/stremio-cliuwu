@@ -9,6 +9,7 @@ import (
 	"stremio-cliuwu/internal/player"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
+	"stremio-cliuwu/internal/subsync"
 	"strings"
 	"sync"
 	"syscall"
@@ -185,6 +186,7 @@ func Run(args []string, buildVersion string) {
 				pl.Shutdown()
 			}
 			store.FlushHistory() // debounced writes mean the last few seconds are still in memory
+			subsync.Cleanup()    // synced subtitles live in a temp dir of our own
 		})
 	}
 	defer cleanup()
