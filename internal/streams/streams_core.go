@@ -242,7 +242,9 @@ func AutoPick(all []stremio.Stream, preferred, binge string, cachedFirst bool, b
 	}
 	top := Sort(ok, preferred, binge, cachedFirst)[0]
 	sameRelease := binge != "" && top.BehaviorHints.BingeGroup == binge
-	if sameRelease || InLibrary(top) || Cached(top) == 1 {
+	// A link flagged as not cached needs downloading first, whatever release
+	// it is, so it is never a safe bet.
+	if Cached(top) != -1 && (sameRelease || InLibrary(top) || Cached(top) == 1) {
 		return top, true
 	}
 	return stremio.Stream{}, false

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"stremio-cliuwu/internal/download"
 	"stremio-cliuwu/internal/format"
 	"stremio-cliuwu/internal/player"
@@ -214,26 +215,45 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// The list still opens, so a pick can be changed; the autopick just
 		// gets queued behind the current episode before it ends.
-		return a, tea.Batch(a.advanceTo(m.Prev, "next up — "), autoPickCmd(m.Prev, false))
+		pick := autoPickCmd(m.Prev, true)
+		return a, tea.Batch(a.advanceTo(m.Prev, "next up — ", pick == nil), pick)
 
 	case player.EpisodeEndedMsg:
 		if ctx.player.Queued() != nil {
 			return a, nil
 		}
 		// Prefetch never fired (a very short episode), so nothing is lined up
-		// and this one has already ended: play the pick straight away.
-		return a, tea.Batch(a.advanceTo(m.Prev, "next up — "), autoPickCmd(m.Prev, true))
+		// and this one has already ended. With autoplay on the pick plays as
+		// soon as it is made, and the list opens only if nothing was safe.
+		if pick := autoPickCmd(m.Prev, false); pick != nil {
+			return a, pick
+		}
+		return a, a.advanceTo(m.Prev, "next up — ", true)
 
 	case autoPickedMsg:
-		if !ctx.cfg.AutoPlayNext || !m.ok {
+		if !ctx.cfg.AutoPlayNext {
 			return a, nil
+		}
+		// The fetch can outlast the episode: drop the result if you've since
+		// started something else or closed mpv.
+		current, ended := playerFollowing(m.prev.VideoID)
+		if !current {
+			return a, nil
+		}
+		if !m.ok {
+			if m.listShown {
+				return a, nil
+			}
+			return a, a.advanceTo(m.prev, "next up — ", true)
 		}
 		// Whatever you queued yourself in the meantime wins.
 		if ctx.player.Queued() != nil {
 			return a, nil
 		}
 		req := buildRequest(m.target, m.stream, 0)
-		if m.immediate {
+		if ended {
+			// It finished while the streams were loading, so nothing would
+			// ever consume a queued item.
 			return a, tea.Batch(ctx.player.Play(req), toast("playing next — "+req.Label))
 		}
 		ctx.player.Queue(req)
@@ -437,16 +457,22 @@ func (a *app) globalKey(k tea.KeyMsg) (tea.Cmd, bool) {
 // autoPickedMsg carries the stream chosen for the next episode, or ok=false
 // when nothing in its list was a safe pick.
 type autoPickedMsg struct {
+	prev      player.PlayRequest // the episode this was fetched for
 	target    streamTarget
 	stream    stremio.Stream
 	ok        bool
-	immediate bool // play now instead of queueing
+	listShown bool // the next episode's list was already surfaced at prefetch
+}
+
+// playerFollowing is the player's view of an episode; a seam for tests.
+var playerFollowing = func(videoID string) (current, ended bool) {
+	return ctx.player.Following(videoID)
 }
 
 // autoPickCmd fetches the next episode's streams and picks one, if autoplay is
-// on and the episode exists. Everything the worker reads from ctx is copied
-// first: it runs off the UI goroutine.
-func autoPickCmd(prev player.PlayRequest, immediate bool) tea.Cmd {
+// on and the episode exists. What the worker needs from ctx is copied first:
+// it runs off the UI goroutine.
+func autoPickCmd(prev player.PlayRequest, listShown bool) tea.Cmd {
 	if !ctx.cfg.AutoPlayNext || !ctx.cfg.AutoNext || prev.Queue == nil {
 		return nil
 	}
@@ -455,12 +481,13 @@ func autoPickCmd(prev player.PlayRequest, immediate bool) tea.Cmd {
 		return nil
 	}
 	addons := ctx.StreamAddons()
-	cfg := ctx.cfg
+	preferred, cachedFirst := ctx.cfg.PreferredQuality, ctx.cfg.CachedFirst
+	blocked := slices.Clone(ctx.cfg.Blocked)
 	binge := store.GetBinge(t.Meta.ID)
 	return func() tea.Msg {
 		all := stremio.GetStreams(addons, t.MediaType, t.fetchID())
-		st, ok := streams.AutoPick(all, cfg.PreferredQuality, binge, cfg.CachedFirst, cfg.Blocked)
-		return autoPickedMsg{target: t, stream: st, ok: ok, immediate: immediate}
+		st, ok := streams.AutoPick(all, preferred, binge, cachedFirst, blocked)
+		return autoPickedMsg{prev: prev, target: t, stream: st, ok: ok, listShown: listShown}
 	}
 }
 
@@ -471,7 +498,7 @@ func autoPickCmd(prev player.PlayRequest, immediate bool) tea.Cmd {
 // menu, or out of a completely different show, mid-browse. When you're
 // elsewhere the streams are fetched in the background instead, so they're
 // warm when you do go looking, and the menu's "next up" entry points at them.
-func (a *app) advanceTo(prev player.PlayRequest, prefix string) tea.Cmd {
+func (a *app) advanceTo(prev player.PlayRequest, prefix string, warm bool) tea.Cmd {
 	t, ok := nextEpisodeTarget(prev)
 	if !ok {
 		return toast("finished — " + prev.Label)
@@ -485,7 +512,9 @@ func (a *app) advanceTo(prev player.PlayRequest, prefix string) tea.Cmd {
 	}
 
 	addons := ctx.StreamAddons()
-	go stremio.GetStreams(addons, "series", t.fetchID()) // warm the cache, don't navigate
+	if warm { // an autopick fetching the same list would make this a duplicate
+		go stremio.GetStreams(addons, "series", t.fetchID()) // warm the cache, don't navigate
+	}
 
 	return toast(prefix + t.Label + " · ready when you are")
 }

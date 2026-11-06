@@ -35,9 +35,10 @@ import (
 // saving, watched marking, the status bar — reads one field instead of doing
 // prefix matching against a map that could go stale.
 //
-// The one thing we lose is mpv's own playlist advance. Rather than silently
-// picking a stream for the next episode, the player emits EpisodeEndedMsg and
-// the TUI opens that episode's stream list — see EpisodeEndedMsg below.
+// The one thing we lose is mpv's own playlist advance. Rather than picking a
+// stream for the next episode itself, the player emits EpisodeEndedMsg and
+// the TUI picks one or opens that episode's stream list — see EpisodeEndedMsg
+// below.
 
 func socketPath() string {
 	if runtime.GOOS == "windows" {
@@ -59,11 +60,12 @@ type StateMsg struct{ State State }
 type NoticeMsg struct{ Text string }
 type ErrMsg struct{ Err error }
 
-// EpisodeEndedMsg fires when a queued episode plays to its end. The player
-// deliberately does not pick the next stream itself: it can't tell a cached
-// debrid result from one that needs downloading, and a blind pick that fails
-// leaves you with an error and no list to retry from. The TUI opens the next
-// episode's stream picker instead.
+// EpisodeEndedMsg fires when a queued episode plays to its end with nothing
+// lined up. The player never picks the next stream itself: it can't tell a
+// cached debrid result from one that needs downloading. The TUI decides: with
+// autoplay on it picks a stream it would stand behind and plays it, and
+// otherwise (or when nothing qualifies) it opens the next episode's stream
+// picker.
 type EpisodeEndedMsg struct{ Prev PlayRequest }
 
 // PrefetchNextMsg fires once the current episode is far enough through that
@@ -137,6 +139,7 @@ type Player struct {
 	queued     *PlayRequest           // plays automatically when the current file ends
 	replacing  bool                   // suppress the end-file/stop that a replace generates
 	prefetched bool                   // next episode already surfaced for this request
+	ended      bool                   // the current file played to its end
 	autoSubbed bool                   // subtitle autoload already attempted for this request
 	subSeen    bool                   // a subtitle track was active in the current file
 	loadedAt   time.Time              // when the current file finished loading
@@ -263,6 +266,19 @@ func (p *Player) Queued() *PlayRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.queued
+}
+
+// Following reports whether videoID is the episode mpv is on, and whether that
+// episode has played to its end. Work started for an episode (fetching what
+// follows it) uses this to tell, when it finishes, that you have since moved on
+// or closed mpv, and whether anything is left to wait for.
+func (p *Player) Following(videoID string) (current, ended bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.now == nil || p.now.VideoID != videoID || !p.state.Alive {
+		return false, false
+	}
+	return true, p.ended
 }
 
 func (p *Player) Now() *PlayRequest {
@@ -1216,6 +1232,9 @@ func (p *Player) onEndFile(reason string) {
 	}
 	now := p.now
 	st := p.state
+	if reason == "eof" {
+		p.ended = true
+	}
 	autoNext := p.cfg.AutoNext
 	autoSync := p.cfg.AutoSync
 	prefetched := p.prefetched
@@ -1306,6 +1325,7 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	prev, prevSt := p.now, p.state
 	p.replacing = true
 	p.prefetched = false
+	p.ended = false
 	p.autoSubbed = false
 	p.subSeen = false
 	p.loadedAt = time.Time{}

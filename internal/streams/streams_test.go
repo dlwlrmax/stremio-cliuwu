@@ -94,7 +94,8 @@ func TestAutoPick(t *testing.T) {
 		blocked []string
 		want    string // "" = nothing is safe to pick
 	}{
-		{"same release wins", []stremio.Stream{mkStream("a", "", &yes, ""), mkStream("b", "grp", &no, "")}, "grp", nil, "b"},
+		{"same release wins", []stremio.Stream{mkStream("a", "", &yes, ""), mkStream("b", "grp", nil, "")}, "grp", nil, "b"},
+		{"same release but not cached: no guess", []stremio.Stream{mkStream("b", "grp", &no, "")}, "grp", nil, ""},
 		{"cached link is safe", []stremio.Stream{mkStream("a", "", &yes, "")}, "", nil, "a"},
 		{"library file is safe", []stremio.Stream{mkStream("a", "", nil, "📌 Library")}, "", nil, "a"},
 		{"unknown, not same release: no guess", []stremio.Stream{mkStream("a", "", nil, "")}, "grp", nil, ""},
