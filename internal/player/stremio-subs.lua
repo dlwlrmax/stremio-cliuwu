@@ -6,10 +6,16 @@
 --   KEY script-binding stremio_subs/stremio-subs
 
 local mp = require "mp"
-local input = require "mp.input"
 local utils = require "mp.utils"
+-- mp.input arrived in mpv 0.38. Without it the key says so instead of silently
+-- doing nothing.
+local has_input, input = pcall(require, "mp.input")
 
 mp.add_key_binding("Alt+s", "stremio-subs", function()
+    if not has_input then
+        mp.osd_message("the subtitle menu needs mpv 0.38 or newer", 4)
+        return
+    end
     mp.osd_message("fetching subtitles…", 30)
     mp.commandv("script-message", "stremio-cliuwu-subs-list")
 end)

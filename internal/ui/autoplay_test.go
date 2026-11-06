@@ -39,7 +39,7 @@ func autoPicked() autoPickedMsg {
 func TestAutoPickedQueuesBehindCurrentEpisode(t *testing.T) {
 	autoCtx(t, true)
 	following(t, true, false)
-	a := &app{}
+	a := &app{stack: []screen{&subsScreen{}}}
 	_, cmd := a.Update(autoPicked())
 	if cmd == nil {
 		t.Fatal("want a command (toast + state), got nil")
@@ -55,7 +55,7 @@ func TestAutoPickedQueuesBehindCurrentEpisode(t *testing.T) {
 func TestAutoPickedPlaysAtOnceWhenEpisodeAlreadyEnded(t *testing.T) {
 	autoCtx(t, true)
 	following(t, true, true)
-	a := &app{}
+	a := &app{stack: []screen{&subsScreen{}}}
 	_, cmd := a.Update(autoPicked())
 	if cmd == nil {
 		t.Fatal("want a play command")
@@ -69,7 +69,7 @@ func TestAutoPickedPlaysAtOnceWhenEpisodeAlreadyEnded(t *testing.T) {
 func TestAutoPickedDroppedWhenEpisodeIsNoLongerOnScreen(t *testing.T) {
 	autoCtx(t, true)
 	following(t, false, false)
-	a := &app{}
+	a := &app{stack: []screen{&subsScreen{}}}
 	_, cmd := a.Update(autoPicked())
 	if cmd != nil {
 		t.Error("a stale pick produced a command")
@@ -83,7 +83,7 @@ func TestAutoPickedNeverReplacesYourOwnQueue(t *testing.T) {
 	autoCtx(t, true)
 	following(t, true, false)
 	ctx.player.Queue(player.PlayRequest{VideoID: "tt1:1:2", URL: "http://x/mine"})
-	a := &app{}
+	a := &app{stack: []screen{&subsScreen{}}}
 	a.Update(autoPicked())
 	if q := ctx.player.Queued(); q == nil || q.URL != "http://x/mine" {
 		t.Errorf("queued = %+v, want your own pick left alone", q)
@@ -93,7 +93,7 @@ func TestAutoPickedNeverReplacesYourOwnQueue(t *testing.T) {
 func TestAutoPickedNothingSafeQueuesNothing(t *testing.T) {
 	autoCtx(t, true)
 	following(t, true, false)
-	a := &app{}
+	a := &app{stack: []screen{&subsScreen{}}}
 	m := autoPicked()
 	m.ok = false
 	m.listShown = true
@@ -121,7 +121,7 @@ func TestAutoPickedNothingSafeOpensListIfNoneShown(t *testing.T) {
 func TestAutoPickedIgnoredWhenSettingOff(t *testing.T) {
 	autoCtx(t, false)
 	following(t, true, false)
-	a := &app{}
+	a := &app{stack: []screen{&subsScreen{}}}
 	a.Update(autoPicked())
 	if q := ctx.player.Queued(); q != nil {
 		t.Errorf("queued = %+v with autoplay off", q)
@@ -137,5 +137,62 @@ func TestAutoPickCmdOffWhenSettingsOff(t *testing.T) {
 	autoCtx(t, false)
 	if autoPickCmd(prev, true) != nil {
 		t.Error("autopick ran with the setting off")
+	}
+}
+
+// Taking the pick off the queue with n must not have changed the show's
+// release, so nothing is recorded just by lining it up.
+func TestAutoPickedDoesNotRecordTheReleaseWhenQueued(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	autoCtx(t, true)
+	following(t, true, false)
+	store.SetBinge("tt1", "old-release")
+	m := autoPicked()
+	m.stream.BehaviorHints.BingeGroup = "new-release"
+	(&app{stack: []screen{&subsScreen{}}}).Update(m)
+	if got := store.GetBinge("tt1"); got != "old-release" {
+		t.Errorf("binge group = %q after queueing an autopick, want it untouched", got)
+	}
+}
+
+// The user queued something after the file had already ended: nothing will
+// ever consume it, so it plays now.
+func TestAutoPickedPlaysYourQueueWhenEpisodeAlreadyEnded(t *testing.T) {
+	autoCtx(t, true)
+	following(t, true, true)
+	ctx.player.Queue(player.PlayRequest{VideoID: "tt1:1:2", URL: "http://x/mine"})
+	_, cmd := (&app{stack: []screen{&subsScreen{}}}).Update(autoPicked())
+	if cmd == nil {
+		t.Fatal("want a play command for the queued stream")
+	}
+	if q := ctx.player.Queued(); q != nil {
+		t.Errorf("queued = %+v, want it handed to the player, not left parked", q)
+	}
+}
+
+// One rule for "is autoplay on", wherever it is asked.
+func TestAutoPickedHonoursOpenNextEpisodeToo(t *testing.T) {
+	autoCtx(t, true)
+	ctx.cfg.AutoNext = false
+	following(t, true, false)
+	(&app{stack: []screen{&subsScreen{}}}).Update(autoPicked())
+	if q := ctx.player.Queued(); q != nil {
+		t.Errorf("queued = %+v with 'open next episode' off", q)
+	}
+}
+
+// When the episode ended before the list was up and an autopick plays, the
+// list for it is surfaced anyway, as it is after any manual pick, so a dead
+// link still has somewhere to retry from.
+func TestNextListOnlyReplacesThePlayedEpisodesList(t *testing.T) {
+	autoCtx(t, true)
+	m := autoPicked()
+	a := &app{stack: []screen{&streamScreen{target: streamTarget{VideoID: "tt1:1:1"}}}}
+	if a.nextListCmd(m.prev) == nil {
+		t.Error("on the played episode's list: want it replaced with the next one's")
+	}
+	b := &app{stack: []screen{&subsScreen{}}}
+	if b.nextListCmd(m.prev) != nil {
+		t.Error("on another screen: nothing to replace")
 	}
 }

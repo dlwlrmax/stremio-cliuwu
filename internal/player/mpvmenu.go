@@ -122,6 +122,7 @@ func (p *Player) showSubMenu() {
 
 	subs := stremio.MergeSubtitles(req.Subs, stremio.GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
 	if !p.isCurrent(gen) {
+		p.osd("") // the script's "fetching…" belongs to a file that's gone
 		return
 	}
 	if len(subs) == 0 {
@@ -153,12 +154,17 @@ func (p *Player) pickFromMenu(id, index string) {
 		return
 	}
 
+	// A slow subtitle host can outlast an episode change, and sub-add then lands
+	// on the new file; that is checked again below before anything is announced.
 	var msg SubtitleAddedMsg
 	if path, synced := subsync.Recall(menu.videoID, s.URL); synced {
 		msg, _ = p.AddLocalSubtitle(path, langs.Name(s.Lang), s.Lang)().(SubtitleAddedMsg)
 		msg.URL = s.URL // the list tracks rows by their original URL
 	} else {
 		msg, _ = p.AddSubtitle(s.URL, langs.Name(s.Lang), s.Lang)().(SubtitleAddedMsg)
+	}
+	if !p.isCurrent(menu.gen) {
+		return
 	}
 	if msg.Err != nil {
 		p.osd("couldn't load that subtitle — try another")

@@ -231,7 +231,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.advanceTo(m.Prev, "next up — ", true)
 
 	case autoPickedMsg:
-		if !ctx.cfg.AutoPlayNext {
+		if !autoPlayOn() {
 			return a, nil
 		}
 		// The fetch can outlast the episode: drop the result if you've since
@@ -246,15 +246,23 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, a.advanceTo(m.prev, "next up — ", true)
 		}
-		// Whatever you queued yourself in the meantime wins.
-		if ctx.player.Queued() != nil {
-			return a, nil
+		// Whatever you queued yourself in the meantime wins. If the episode
+		// has already ended, that queue will never be consumed on its own, so
+		// it plays now.
+		if q := ctx.player.Queued(); q != nil {
+			if !ended {
+				return a, nil
+			}
+			req := *q
+			ctx.player.Unqueue()
+			return a, tea.Batch(ctx.player.Play(req), toast("playing next — "+req.Label))
 		}
 		req := buildRequest(m.target, m.stream, 0)
 		if ended {
 			// It finished while the streams were loading, so nothing would
-			// ever consume a queued item.
-			return a, tea.Batch(ctx.player.Play(req), toast("playing next — "+req.Label))
+			// ever consume a queued item. The next episode's list is put up as
+			// well, as after any manual pick, so a dead link can be retried.
+			return a, tea.Batch(ctx.player.Play(req), toast("playing next — "+req.Label), a.nextListCmd(m.prev))
 		}
 		ctx.player.Queue(req)
 		return a, tea.Batch(toast("up next — "+req.Label+" · picked for you"), playerStateCmd())
@@ -464,6 +472,10 @@ type autoPickedMsg struct {
 	listShown bool // the next episode's list was already surfaced at prefetch
 }
 
+// autoPlayOn is the one answer to "does the app pick the next episode itself":
+// autoplay needs "open next episode" on as well.
+func autoPlayOn() bool { return ctx.cfg.AutoPlayNext && ctx.cfg.AutoNext }
+
 // playerFollowing is the player's view of an episode; a seam for tests.
 var playerFollowing = func(videoID string) (current, ended bool) {
 	return ctx.player.Following(videoID)
@@ -473,7 +485,7 @@ var playerFollowing = func(videoID string) (current, ended bool) {
 // on and the episode exists. What the worker needs from ctx is copied first:
 // it runs off the UI goroutine.
 func autoPickCmd(prev player.PlayRequest, listShown bool) tea.Cmd {
-	if !ctx.cfg.AutoPlayNext || !ctx.cfg.AutoNext || prev.Queue == nil {
+	if !autoPlayOn() || prev.Queue == nil {
 		return nil
 	}
 	t, ok := nextEpisodeTarget(prev)
@@ -504,11 +516,8 @@ func (a *app) advanceTo(prev player.PlayRequest, prefix string, warm bool) tea.C
 		return toast("finished — " + prev.Label)
 	}
 
-	if cur, isStreams := a.top().(*streamScreen); isStreams && cur.target.VideoID == prev.VideoID {
-		return tea.Sequence(
-			toast(prefix+t.Label),
-			replaceTop(newStreamScreenFiltered(t, cur.list.Query())),
-		)
+	if list := a.nextListCmd(prev); list != nil {
+		return tea.Sequence(toast(prefix+t.Label), list)
 	}
 
 	addons := ctx.StreamAddons()
@@ -517,6 +526,19 @@ func (a *app) advanceTo(prev player.PlayRequest, prefix string, warm bool) tea.C
 	}
 
 	return toast(prefix + t.Label + " · ready when you are")
+}
+
+// nextListCmd swaps the stream list of the episode that was just playing for
+// the next episode's, or returns nil when that list isn't what's on screen.
+func (a *app) nextListCmd(prev player.PlayRequest) tea.Cmd {
+	t, ok := nextEpisodeTarget(prev)
+	if !ok {
+		return nil
+	}
+	if cur, isStreams := a.top().(*streamScreen); isStreams && cur.target.VideoID == prev.VideoID {
+		return replaceTop(newStreamScreenFiltered(t, cur.list.Query()))
+	}
+	return nil
 }
 
 // refreshTop rebuilds whichever screen we've just come back to.

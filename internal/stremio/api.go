@@ -109,11 +109,48 @@ func InvalidateCaches() {
 	cacheSubsMiss.Clear()
 }
 
+// streamFlight lets callers asking for the same episode at the same time share
+// one fetch. The picker and the autopick both ask as soon as an episode nears
+// its end, and without this every addon would be queried twice at once.
+var streamFlight struct {
+	sync.Mutex
+	m map[string]*streamCall
+}
+
+type streamCall struct {
+	done chan struct{}
+	res  []Stream
+}
+
 func GetStreams(addons []Addon, mediaType, videoID string) []Stream {
 	if v, ok := cacheStreams.Get(videoID); ok {
 		return v
 	}
 
+	streamFlight.Lock()
+	if c, ok := streamFlight.m[videoID]; ok {
+		streamFlight.Unlock()
+		<-c.done
+		return c.res
+	}
+	c := &streamCall{done: make(chan struct{})}
+	if streamFlight.m == nil {
+		streamFlight.m = map[string]*streamCall{}
+	}
+	streamFlight.m[videoID] = c
+	streamFlight.Unlock()
+	defer func() {
+		streamFlight.Lock()
+		delete(streamFlight.m, videoID)
+		streamFlight.Unlock()
+		close(c.done)
+	}()
+
+	c.res = fetchStreams(addons, mediaType, videoID)
+	return c.res
+}
+
+func fetchStreams(addons []Addon, mediaType, videoID string) []Stream {
 	// Addons that can serve this id, in configured order.
 	var usable []Addon
 	for _, a := range addons {

@@ -437,6 +437,12 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 // the two can't drift — a queued episode has to record exactly the same
 // history and episode context as one played directly.
 func (s *streamScreen) request(st stremio.Stream, resume float64) player.PlayRequest {
+	// The release you chose becomes the show's, so the next episode's list
+	// puts the same one first. Recorded here rather than in buildRequest: an
+	// autopick builds a request too, and lining one up isn't a choice.
+	if s.target.MediaType == "series" {
+		store.SetBinge(s.target.Meta.ID, st.BehaviorHints.BingeGroup)
+	}
 	return buildRequest(s.target, st, resume)
 }
 
@@ -464,10 +470,6 @@ func buildRequest(t streamTarget, st stremio.Stream, resume float64) player.Play
 			entry.NextTitle = n.Title
 			entry.NextReleased = n.Released
 		}
-	}
-
-	if t.MediaType == "series" {
-		store.SetBinge(t.Meta.ID, st.BehaviorHints.BingeGroup)
 	}
 
 	return player.PlayRequest{
