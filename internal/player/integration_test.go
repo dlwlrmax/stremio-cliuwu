@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"stremio-cliuwu/internal/queue"
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
+	"stremio-cliuwu/internal/subsync"
 	"testing"
 	"time"
 
@@ -393,4 +395,58 @@ func TestIntegrationSameLanguageTracksAreToldApartByTitle(t *testing.T) {
 	itWait(t, 8*time.Second, "next episode to start on the Signs track", func() bool {
 		return e.sid() == float64(2)
 	})
+}
+
+// A subtitle synced earlier for this video is what the autoloader loads: no
+// addon is asked, and the original is not added.
+func TestIntegrationAutoloaderPrefersSyncedCopy(t *testing.T) {
+	e := itSetup(t)
+	t.Cleanup(subsync.Cleanup)
+
+	asked := make(chan struct{}, 8)
+	e.fakeSubAddon(t, "eng", 0)
+	// Point the addon at a server that records being asked.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked <- struct{}{}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	e.addons[0].TransportURL = srv.URL + "/manifest.json"
+
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "alass-cli"), []byte("#!/bin/sh\ncp \"$2\" \"$3\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	files := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "1\n00:00:00,000 --> 00:00:02,000\nsynced\n")
+	}))
+	t.Cleanup(files.Close)
+	out, err := subsync.Sync(context.Background(), files.URL+"/ref", files.URL+"/sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subsync.Remember("ttS:1:2", subsync.Synced{URL: files.URL + "/sub", Lang: "eng", Path: out})
+
+	e.p.play(seriesReq(e.vid, "ttS", 2))
+	e.loaded(t)
+	itWait(t, 10*time.Second, "synced copy to load", func() bool { return e.externalSubs() == 1 })
+
+	resp, _ := e.p.command("get_property", "track-list")
+	raw, _ := resp["data"].([]any)
+	found := false
+	for _, it := range raw {
+		m, _ := it.(map[string]any)
+		if m["external"] == true && m["external-filename"] == out {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("external track is not the synced file %s: %v", out, raw)
+	}
+	select {
+	case <-asked:
+		t.Error("an addon was asked although a synced copy exists")
+	default:
+	}
 }

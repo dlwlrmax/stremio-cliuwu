@@ -760,6 +760,18 @@ func (p *Player) maybeAutoSubtitle() {
 	// goroutine has no lock under which to read the header.
 	addons := slices.Clone(p.currentAddons())
 	p.sendAsync(func() {
+		// A subtitle the user already synced for this video is retimed to this
+		// file and costs no network, so it beats everything else. It has to be
+		// in a language the user wants: the show's own, else the global list.
+		if p.loadSynced(gen, req.VideoID, func(lang string) bool {
+			if hasPref {
+				return langs.Name(lang) == pref.Lang
+			}
+			return slices.Contains(prefs, langs.Name(lang))
+		}) {
+			return
+		}
+
 		// What is already in the file needs no network, so it goes first: the
 		// show's language shouldn't wait on the slowest subtitle addon while
 		// --slang's own pick is on screen.
@@ -1035,8 +1047,6 @@ func pickEmbeddedSub(tracks []any, lang, title string) (id int, selected, ok boo
 	return id, selected, ok
 }
 
-// addSubtitle loads a track and, on success, announces it. Shared by the
-// global and per-show autoloaders.
 // isCurrent reports whether the file that started an autoload is still the one
 // playing. A subtitle fetch or sub-add can outlast an episode change, and a
 // track added after it would attach to the wrong file.
@@ -1046,6 +1056,29 @@ func (p *Player) isCurrent(gen uint64) bool {
 	return p.playGen == gen
 }
 
+// loadSynced loads the newest subtitle the user synced for this video, if one
+// exists in an accepted language. The announced message carries the original
+// subtitle's URL, so the picker marks the right row.
+func (p *Player) loadSynced(gen uint64, videoID string, accept func(lang string) bool) bool {
+	if !p.isCurrent(gen) {
+		return false
+	}
+	syn, ok := subsync.Latest(videoID, accept)
+	if !ok {
+		return false
+	}
+	msg, _ := p.AddLocalSubtitle(syn.Path, langs.Name(syn.Lang), syn.Lang)().(SubtitleAddedMsg)
+	if msg.Err != nil {
+		return false
+	}
+	p.emit(NoticeMsg{Text: "subtitles: " + langs.Name(syn.Lang) + " · synced"})
+	msg.URL = syn.URL
+	p.emit(msg)
+	return true
+}
+
+// addSubtitle loads a track and, on success, announces it. Shared by the
+// global and per-show autoloaders.
 func (p *Player) addSubtitle(gen uint64, s stremio.Subtitle) bool {
 	if !p.isCurrent(gen) {
 		return false

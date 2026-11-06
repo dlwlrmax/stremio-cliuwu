@@ -230,7 +230,7 @@ func TestEnterPrefersSyncedFile(t *testing.T) {
 	if !strings.Contains(toastText, "synced") {
 		t.Errorf("Enter toast = %q, want it to say the synced copy is loading", toastText)
 	}
-	if got, ok := subsync.Recall(s2.syncKey(s2.subs[1])); !ok || got != synced.path {
+	if got, ok := subsync.Recall(s2.query.VideoID, s2.subs[1].URL); !ok || got != synced.path {
 		t.Errorf("recalled %q, %v; want %q", got, ok, synced.path)
 	}
 }

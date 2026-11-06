@@ -70,39 +70,79 @@ func Cleanup() {
 	}
 }
 
-// done holds finished syncs by a key the caller chooses, so a subtitle synced
-// once is not synced again when its list is opened a second time.
-var done struct {
-	sync.Mutex
-	m map[string]string
+// Synced is one finished sync: the list entry it came from and the retimed
+// file that stands in for it.
+type Synced struct {
+	URL  string // the original subtitle's URL
+	Lang string // its language code, as the addon gave it
+	Path string // the retimed file, inside the temp directory
 }
 
-// Remember records the retimed file for key. Paths outside the temp directory
-// are ignored.
-func Remember(key, path string) {
-	if !Owns(path) {
+// done holds finished syncs per video, oldest first, so a subtitle synced once
+// is not synced again and the autoloader can find it next time the video plays.
+var done struct {
+	sync.Mutex
+	m map[string][]Synced
+}
+
+// Remember records a finished sync for a video. A path outside the temp
+// directory is ignored. Syncing the same subtitle again replaces the old entry.
+func Remember(videoID string, s Synced) {
+	if videoID == "" || !Owns(s.Path) {
 		return
 	}
 	done.Lock()
 	defer done.Unlock()
 	if done.m == nil {
-		done.m = map[string]string{}
+		done.m = map[string][]Synced{}
 	}
-	done.m[key] = path
+	list := done.m[videoID][:0:0]
+	for _, e := range done.m[videoID] {
+		if e.URL != s.URL {
+			list = append(list, e)
+		}
+	}
+	done.m[videoID] = append(list, s)
 }
 
-// Recall returns the file remembered for key, if it is still there.
-func Recall(key string) (string, bool) {
+// live is the entries for a video whose files are still there, oldest first.
+func live(videoID string) []Synced {
 	done.Lock()
-	path, ok := done.m[key]
+	all := append([]Synced(nil), done.m[videoID]...)
 	done.Unlock()
-	if !ok || !Owns(path) {
-		return "", false
+	var out []Synced
+	for _, e := range all {
+		if !Owns(e.Path) {
+			continue
+		}
+		if _, err := os.Stat(e.Path); err == nil {
+			out = append(out, e)
+		}
 	}
-	if _, err := os.Stat(path); err != nil {
-		return "", false
+	return out
+}
+
+// Recall returns the retimed file for one subtitle of a video, if it is still
+// there.
+func Recall(videoID, url string) (string, bool) {
+	for _, e := range live(videoID) {
+		if e.URL == url {
+			return e.Path, true
+		}
 	}
-	return path, true
+	return "", false
+}
+
+// Latest returns the most recent sync for a video whose language accept
+// approves, if any.
+func Latest(videoID string, accept func(lang string) bool) (Synced, bool) {
+	list := live(videoID)
+	for i := len(list) - 1; i >= 0; i-- {
+		if accept == nil || accept(list[i].Lang) {
+			return list[i], true
+		}
+	}
+	return Synced{}, false
 }
 
 // Owns reports whether path is a file inside the temp directory. Symlinks are

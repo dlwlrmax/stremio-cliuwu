@@ -321,7 +321,7 @@ func TestSyncAlassErrorKeepsTheChain(t *testing.T) {
 func TestRememberRecall(t *testing.T) {
 	Cleanup()
 	t.Cleanup(Cleanup)
-	if _, ok := Recall("k"); ok {
+	if _, ok := Recall("v", "u"); ok {
 		t.Fatal("Recall found something nobody remembered")
 	}
 
@@ -331,20 +331,65 @@ func TestRememberRecall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	Remember("k", out)
-	if got, ok := Recall("k"); !ok || got != out {
+	Remember("v", Synced{URL: "u", Lang: "eng", Path: out})
+	if got, ok := Recall("v", "u"); !ok || got != out {
 		t.Fatalf("Recall = %q, %v; want %q, true", got, ok, out)
+	}
+	if _, ok := Recall("other video", "u"); ok {
+		t.Error("Recall crossed videos")
 	}
 
 	// A path the package doesn't own is never remembered.
-	Remember("evil", "/etc/passwd")
-	if _, ok := Recall("evil"); ok {
+	Remember("v", Synced{URL: "evil", Lang: "eng", Path: "/etc/passwd"})
+	if _, ok := Recall("v", "evil"); ok {
 		t.Error("Recall returned a path outside the temp directory")
 	}
 
 	// The file going away (or Cleanup) means there is nothing to load.
 	os.Remove(out)
-	if _, ok := Recall("k"); ok {
+	if _, ok := Recall("v", "u"); ok {
 		t.Error("Recall returned a file that no longer exists")
+	}
+}
+
+func TestLatest(t *testing.T) {
+	Cleanup()
+	t.Cleanup(Cleanup)
+	fakeAlass(t, `cp "$2" "$3"`)
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+	mk := func() string {
+		out, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	eng1, fre, eng2 := mk(), mk(), mk()
+	Remember("v", Synced{URL: "e1", Lang: "eng", Path: eng1})
+	Remember("v", Synced{URL: "f", Lang: "fre", Path: fre})
+	Remember("v", Synced{URL: "e2", Lang: "eng", Path: eng2})
+
+	isEng := func(l string) bool { return l == "eng" }
+	if got, ok := Latest("v", isEng); !ok || got.URL != "e2" {
+		t.Errorf("Latest(eng) = %+v, %v; want the newest English one", got, ok)
+	}
+	if got, ok := Latest("v", func(l string) bool { return l == "fre" }); !ok || got.URL != "f" {
+		t.Errorf("Latest(fre) = %+v, %v", got, ok)
+	}
+	if _, ok := Latest("v", func(l string) bool { return l == "spa" }); ok {
+		t.Error("Latest found a language nobody synced")
+	}
+	if _, ok := Latest("nope", nil); ok {
+		t.Error("Latest found a sync for another video")
+	}
+
+	// Syncing the same sub again replaces its entry rather than stacking.
+	Remember("v", Synced{URL: "e1", Lang: "eng", Path: eng1})
+	if got, _ := Latest("v", isEng); got.URL != "e1" {
+		t.Errorf("Latest(eng) = %q after re-syncing e1, want e1", got.URL)
+	}
+	os.Remove(eng1)
+	if got, ok := Latest("v", isEng); !ok || got.URL != "e2" {
+		t.Errorf("Latest(eng) = %+v, %v after e1's file went; want e2", got, ok)
 	}
 }
