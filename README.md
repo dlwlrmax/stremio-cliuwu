@@ -134,11 +134,12 @@ off by default under settings; they're block art, so temper expectations.
 serves them. It opens on whatever you've set as your subtitle language —
 that setting takes a list, so `eng, en, English` all count as English.
 
-**`Alt+s` in mpv opens the same list inside the video.** The app loads a small
-script into the mpv it starts; the key fetches your addons' subtitles and shows
-them as a menu (type to filter, Enter to load). A subtitle you've synced loads
-from its synced copy. Rebind it in `input.conf` with
-`KEY script-binding stremio_subs/stremio-subs`.
+**`Alt+j` in mpv opens one subtitle menu.** The app loads a small script into
+the mpv it starts. The key lists Off, the tracks mpv already has and your
+addons' subtitles that aren't loaded yet (type to filter, Enter to switch or
+load). A subtitle you've synced loads from its synced copy. In an mpv the app
+didn't start, `Alt+j` stays mpv's own track picker. Rebind it in `input.conf`
+with `KEY script-binding stremio_subs/stremio-subs`.
 
 If a subtitle is out of time with the video, press `m` on one that's well
 timed to mark it as the reference, then `S` on the mistimed one to retime it

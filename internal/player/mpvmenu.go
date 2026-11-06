@@ -125,21 +125,27 @@ func (p *Player) showSubMenu() {
 		p.osd("") // the script's "fetching…" belongs to a file that's gone
 		return
 	}
-	if len(subs) == 0 {
-		p.osd("no subtitles found")
-		return
-	}
-
+	// With nothing from the addons the menu still opens, on the tracks alone.
 	menu := &subMenu{id: int(menuSeq.Add(1)), gen: gen, videoID: req.VideoID, subs: subs}
 	p.mu.Lock()
 	p.menu = menu
 	p.mu.Unlock()
 
-	items := subMenuItems(subs, func(url string) bool {
+	labels := subMenuItems(subs, func(url string) bool {
 		_, ok := subsync.Recall(menu.videoID, url)
 		return ok
 	})
-	payload, _ := json.Marshal(map[string]any{"id": menu.id, "items": items})
+	type row struct {
+		Label string `json:"label"`
+		URL   string `json:"url"`  // lets the script spot a subtitle that is already a track
+		File  string `json:"file"` // ...or one whose synced copy is
+	}
+	rows := make([]row, len(subs))
+	for i, s := range subs {
+		file, _ := subsync.Recall(menu.videoID, s.URL)
+		rows[i] = row{Label: labels[i], URL: s.URL, File: file}
+	}
+	payload, _ := json.Marshal(map[string]any{"id": menu.id, "rows": rows})
 	p.command("script-message-to", "stremio_subs", "menu", string(payload))
 }
 

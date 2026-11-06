@@ -13,6 +13,7 @@ import (
 	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"stremio-cliuwu/internal/subsync"
+	"strings"
 	"testing"
 	"time"
 
@@ -494,4 +495,80 @@ func TestIntegrationSubtitleMenuInMpv(t *testing.T) {
 	if got := e.externalSubs(); got != n {
 		t.Errorf("a stale answer loaded a track: %d -> %d", n, got)
 	}
+}
+
+// One menu: the tracks mpv already has, an Off row, and the addons' subtitles
+// that aren't loaded yet. A subtitle that is already a track is not listed twice.
+func TestIntegrationOneMenuHasTracksAndAddonSubs(t *testing.T) {
+	e := itSetup(t)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	for _, n := range []string{"/a.srt", "/b.srt"} {
+		mux.HandleFunc(n, func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, "1\n00:00:00,000 --> 00:00:02,000\nplugin\n")
+		})
+	}
+	mux.HandleFunc("/subtitles/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"subtitles":[{"id":"loaded-one","url":%q,"lang":"eng"},{"id":"other-one","url":%q,"lang":"eng"}]}`,
+			srv.URL+"/a.srt", srv.URL+"/b.srt")
+	})
+	e.addons = []stremio.Addon{{
+		TransportURL: srv.URL + "/manifest.json",
+		Manifest:     stremio.Manifest{ID: "fake.subs", Name: "fake", Types: []string{"series"}, Resources: []any{"subtitles"}},
+	}}
+
+	e.p.play(seriesReq(e.vid, "ttO", 1))
+	e.loaded(t)
+	// The autoloader takes the first English plugin sub: that is now a track.
+	itWait(t, 10*time.Second, "autoloaded plugin track", func() bool { return e.externalSubs() == 1 })
+
+	if _, err := e.p.command("script-binding", "stremio_subs/stremio-subs"); err != nil {
+		t.Fatal(err)
+	}
+	var rows []any
+	itWait(t, 10*time.Second, "the merged menu to be built", func() bool {
+		resp, err := e.p.command("get_property", "user-data/stremio_subs/rows")
+		if err != nil {
+			return false
+		}
+		rows, _ = resp["data"].([]any)
+		return len(rows) > 0
+	})
+
+	count := map[string]int{}
+	var addonLabel string
+	for _, r := range rows {
+		m, _ := r.(map[string]any)
+		k, _ := m["kind"].(string)
+		count[k]++
+		if k == "addon" {
+			addonLabel, _ = m["label"].(string)
+		}
+	}
+	if count["track"] != 2 || count["off"] != 1 || count["addon"] != 1 {
+		t.Fatalf("rows = %v; want 2 tracks (embedded + the loaded plugin one), 1 off, 1 addon", rows)
+	}
+	if !strings.Contains(addonLabel, "other-one") {
+		t.Errorf("addon row = %q, want the sub that isn't loaded yet", addonLabel)
+	}
+
+	// Choosing an addon row goes back to the app and loads it.
+	e.p.mu.Lock()
+	menu := e.p.menu
+	e.p.mu.Unlock()
+	idx := 0
+	for i, s := range menu.subs {
+		if s.ID == "other-one" {
+			idx = i + 1
+		}
+	}
+	if idx == 0 {
+		t.Fatal("the app's menu lost the other sub")
+	}
+	if _, err := e.p.command("script-message", "stremio-cliuwu-subs-pick", fmt.Sprint(menu.id), fmt.Sprint(idx)); err != nil {
+		t.Fatal(err)
+	}
+	itWait(t, 10*time.Second, "the other sub to load", func() bool { return e.externalSubs() == 2 })
 }

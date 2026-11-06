@@ -355,7 +355,9 @@ func (p *Player) spawn() error {
 	}
 
 	if script := scriptPath(); script != "" {
-		args = append(args, "--script="+script)
+		// The script reads this to know the app is on the other end of the
+		// socket and can be asked for addon subtitles.
+		args = append(args, "--script="+script, "--script-opts-append=stremio_cliuwu=yes")
 	}
 
 	cmd := exec.Command(bin, args...)
