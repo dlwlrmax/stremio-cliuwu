@@ -138,8 +138,10 @@ that setting takes a list, so `eng, en, English` all count as English.
 the mpv it starts. The key lists Off, the tracks mpv already has and your
 addons' subtitles that aren't loaded yet (type to filter, Enter to switch or
 load). A subtitle you've synced loads from its synced copy. In an mpv the app
-didn't start, `Alt+j` stays mpv's own track picker. Rebind it in `input.conf`
-with `KEY script-binding stremio_subs/stremio-subs`.
+didn't start, `Alt+j` stays mpv's own track picker. To use another key, put
+`script-opts-append=stremio_subs-key=Alt+m` in `mpv.conf`; if the addons take
+longer than 10 seconds to answer the menu opens with the tracks alone
+(`stremio_subs-timeout` changes that).
 
 If a subtitle is out of time with the video, press `m` on one that's well
 timed to mark it as the reference, then `S` on the mistimed one to retime it

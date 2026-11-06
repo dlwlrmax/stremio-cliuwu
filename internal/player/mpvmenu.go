@@ -95,7 +95,11 @@ func (p *Player) onClientMessage(raw any) {
 	}
 	switch a[0] {
 	case "stremio-cliuwu-subs-list":
-		p.sendAsync(p.showSubMenu)
+		req := ""
+		if len(a) > 1 {
+			req = a[1]
+		}
+		p.sendAsync(func() { p.showSubMenu(req) })
 	case "stremio-cliuwu-subs-pick":
 		if len(a) >= 3 {
 			p.sendAsync(func() { p.pickFromMenu(a[1], a[2]) })
@@ -108,7 +112,9 @@ func (p *Player) osd(text string) {
 }
 
 // showSubMenu fetches subtitles for the playing file and sends mpv the menu.
-func (p *Player) showSubMenu() {
+// req is the script's request number; the answer carries it back so the script
+// can tell it from any other.
+func (p *Player) showSubMenu(req string) {
 	p.mu.Lock()
 	now, cfg, gen := p.now, p.cfg, p.playGen
 	p.mu.Unlock()
@@ -116,36 +122,39 @@ func (p *Player) showSubMenu() {
 		p.osd("nothing is playing")
 		return
 	}
-	req := *now
-	req.Subs = append([]stremio.Subtitle(nil), now.Subs...)
+	playing := *now
+	playing.Subs = append([]stremio.Subtitle(nil), now.Subs...)
 	addons := append([]stremio.Addon(nil), p.currentAddons()...)
 
-	subs := stremio.MergeSubtitles(req.Subs, stremio.GetSubtitles(addons, SubsQueryFrom(&req)), cfg.SubtitleLang)
+	subs := stremio.MergeSubtitles(playing.Subs, stremio.GetSubtitles(addons, SubsQueryFrom(&playing)), cfg.SubtitleLang)
 	if !p.isCurrent(gen) {
 		p.osd("") // the script's "fetching…" belongs to a file that's gone
 		return
 	}
 	// With nothing from the addons the menu still opens, on the tracks alone.
-	menu := &subMenu{id: int(menuSeq.Add(1)), gen: gen, videoID: req.VideoID, subs: subs}
+	menu := &subMenu{id: int(menuSeq.Add(1)), gen: gen, videoID: playing.VideoID, subs: subs}
 	p.mu.Lock()
 	p.menu = menu
 	p.mu.Unlock()
 
-	labels := subMenuItems(subs, func(url string) bool {
-		_, ok := subsync.Recall(menu.videoID, url)
-		return ok
-	})
+	// One lookup per subtitle, so its label and its file can't disagree.
+	files := make(map[string]string, len(subs))
+	for _, s := range subs {
+		if f, ok := subsync.Recall(menu.videoID, s.URL); ok {
+			files[s.URL] = f
+		}
+	}
+	labels := subMenuItems(subs, func(url string) bool { return files[url] != "" })
 	type row struct {
 		Label string `json:"label"`
 		URL   string `json:"url"`  // lets the script spot a subtitle that is already a track
-		File  string `json:"file"` // ...or one whose synced copy is
+		File  string `json:"file"` // ...or the synced copy of it that is
 	}
 	rows := make([]row, len(subs))
 	for i, s := range subs {
-		file, _ := subsync.Recall(menu.videoID, s.URL)
-		rows[i] = row{Label: labels[i], URL: s.URL, File: file}
+		rows[i] = row{Label: labels[i], URL: s.URL, File: files[s.URL]}
 	}
-	payload, _ := json.Marshal(map[string]any{"id": menu.id, "rows": rows})
+	payload, _ := json.Marshal(map[string]any{"req": req, "id": menu.id, "rows": rows})
 	p.command("script-message-to", "stremio_subs", "menu", string(payload))
 }
 
@@ -156,7 +165,11 @@ func (p *Player) pickFromMenu(id, index string) {
 	menu := p.menu
 	p.mu.Unlock()
 	s, ok := menu.pick(id, index)
-	if !ok || !p.isCurrent(menu.gen) {
+	if !ok {
+		p.osd("that list is out of date — press the key again")
+		return
+	}
+	if !p.isCurrent(menu.gen) {
 		return
 	}
 

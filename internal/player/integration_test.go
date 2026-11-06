@@ -537,6 +537,20 @@ func TestIntegrationOneMenuHasTracksAndAddonSubs(t *testing.T) {
 		return len(rows) > 0
 	})
 
+	// Which of the two the autoloader took isn't the test's business; the
+	// other one is what the menu must still offer.
+	loadedID, otherID := "loaded-one", "other-one"
+	if resp, err := e.p.command("get_property", "track-list"); err == nil {
+		raw, _ := resp["data"].([]any)
+		for _, it := range raw {
+			m, _ := it.(map[string]any)
+			if f, _ := m["external-filename"].(string); strings.HasSuffix(f, "/b.srt") {
+				loadedID, otherID = "other-one", "loaded-one"
+			}
+		}
+	}
+	_ = loadedID
+
 	count := map[string]int{}
 	var addonLabel string
 	for _, r := range rows {
@@ -550,8 +564,8 @@ func TestIntegrationOneMenuHasTracksAndAddonSubs(t *testing.T) {
 	if count["track"] != 2 || count["off"] != 1 || count["addon"] != 1 {
 		t.Fatalf("rows = %v; want 2 tracks (embedded + the loaded plugin one), 1 off, 1 addon", rows)
 	}
-	if !strings.Contains(addonLabel, "other-one") {
-		t.Errorf("addon row = %q, want the sub that isn't loaded yet", addonLabel)
+	if !strings.Contains(addonLabel, otherID) {
+		t.Errorf("addon row = %q, want the sub that isn't loaded yet (%s)", addonLabel, otherID)
 	}
 
 	// Choosing an addon row goes back to the app and loads it.
@@ -560,7 +574,7 @@ func TestIntegrationOneMenuHasTracksAndAddonSubs(t *testing.T) {
 	e.p.mu.Unlock()
 	idx := 0
 	for i, s := range menu.subs {
-		if s.ID == "other-one" {
+		if s.ID == otherID {
 			idx = i + 1
 		}
 	}
@@ -571,4 +585,77 @@ func TestIntegrationOneMenuHasTracksAndAddonSubs(t *testing.T) {
 		t.Fatal(err)
 	}
 	itWait(t, 10*time.Second, "the other sub to load", func() bool { return e.externalSubs() == 2 })
+}
+
+// A sub that is loaded unsynced stays in the menu once a synced copy exists, so
+// the retimed one can be picked; it only drops out when that copy is the track.
+func TestIntegrationMenuOffersSyncedCopyOfLoadedSub(t *testing.T) {
+	e := itSetup(t)
+	t.Cleanup(subsync.Cleanup)
+
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "alass-cli"), []byte("#!/bin/sh\ncp \"$2\" \"$3\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	for _, n := range []string{"/a.srt", "/b.srt"} {
+		mux.HandleFunc(n, func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, "1\n00:00:00,000 --> 00:00:02,000\nplugin\n")
+		})
+	}
+	mux.HandleFunc("/subtitles/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"subtitles":[{"id":"one","url":%q,"lang":"eng"},{"id":"two","url":%q,"lang":"eng"}]}`,
+			srv.URL+"/a.srt", srv.URL+"/b.srt")
+	})
+	e.addons = []stremio.Addon{{
+		TransportURL: srv.URL + "/manifest.json",
+		Manifest:     stremio.Manifest{ID: "fake.subs", Name: "fake", Types: []string{"series"}, Resources: []any{"subtitles"}},
+	}}
+
+	e.p.play(seriesReq(e.vid, "ttY", 1))
+	e.loaded(t)
+	itWait(t, 10*time.Second, "autoloaded plugin track", func() bool { return e.externalSubs() == 1 })
+
+	// Whichever the autoloader took is now synced.
+	loadedURL := srv.URL + "/a.srt"
+	resp, _ := e.p.command("get_property", "track-list")
+	raw, _ := resp["data"].([]any)
+	for _, it := range raw {
+		m, _ := it.(map[string]any)
+		if f, _ := m["external-filename"].(string); strings.HasSuffix(f, "/b.srt") {
+			loadedURL = srv.URL + "/b.srt"
+		}
+	}
+	out, err := subsync.Sync(context.Background(), srv.URL+"/a.srt", loadedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subsync.Remember("ttY:1:1", subsync.Synced{URL: loadedURL, Lang: "eng", Path: out})
+
+	if _, err := e.p.command("script-binding", "stremio_subs/stremio-subs"); err != nil {
+		t.Fatal(err)
+	}
+	var rows []any
+	itWait(t, 10*time.Second, "the menu to be built", func() bool {
+		resp, err := e.p.command("get_property", "user-data/stremio_subs/rows")
+		if err != nil {
+			return false
+		}
+		rows, _ = resp["data"].([]any)
+		return len(rows) > 0
+	})
+	synced := 0
+	for _, r := range rows {
+		m, _ := r.(map[string]any)
+		if l, _ := m["label"].(string); m["kind"] == "addon" && strings.Contains(l, "synced") {
+			synced++
+		}
+	}
+	if synced != 1 {
+		t.Errorf("rows = %v; want the loaded sub offered again as its synced copy", rows)
+	}
 }
