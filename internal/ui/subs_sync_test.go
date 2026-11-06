@@ -2,6 +2,11 @@ package ui
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,4 +174,77 @@ func TestGlobalSStepsAsideOnSubsScreen(t *testing.T) {
 	if _, handled := a.globalKey(runeKey('S')); handled {
 		t.Error("global S handled the key on the subtitle list; the list's own S never runs")
 	}
+}
+
+// A sub that was synced earlier loads from the retimed file, not the original.
+func TestEnterPrefersSyncedFile(t *testing.T) {
+	t.Cleanup(subsync.Cleanup)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alass-cli"), []byte("#!/bin/sh\ncp \"$2\" \"$3\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	s := syncScreen(t)
+	s.subs[0].URL, s.subs[1].URL = srv.URL+"/one", srv.URL+"/two"
+	s.query.VideoID = "tt1:1:1"
+	s.rebuild()
+	s.ref = &s.subs[0]
+	s.list.Focus(1)
+
+	// Sync row 1 for real, the way S does, and feed the result back.
+	_, cmd := s.Update(runeKey('S'))
+	var synced subSyncedMsg
+	for _, c := range flatten(msgOf(t, cmd)) {
+		if m, ok := c().(subSyncedMsg); ok {
+			synced = m
+		}
+	}
+	if synced.err != nil || synced.path == "" {
+		t.Fatalf("sync failed: %+v", synced)
+	}
+	s.Update(synced)
+
+	// A fresh list for the same video: Enter on the same sub.
+	s2 := syncScreen(t)
+	s2.subs[1].URL = srv.URL + "/two"
+	s2.query.VideoID = "tt1:1:1"
+	s2.rebuild()
+	s2.list.Focus(1)
+	_, cmd = s2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// The load itself needs a live mpv, so the commands are run with the
+	// player's panic swallowed and the toast says which file was chosen.
+	var toastText string
+	for _, c := range flatten(msgOf(t, cmd)) {
+		func() {
+			defer func() { _ = recover() }()
+			if m, ok := c().(toastMsg); ok {
+				toastText = m.text
+			}
+		}()
+	}
+	if !strings.Contains(toastText, "synced") {
+		t.Errorf("Enter toast = %q, want it to say the synced copy is loading", toastText)
+	}
+	if got, ok := subsync.Recall(s2.syncKey(s2.subs[1])); !ok || got != synced.path {
+		t.Errorf("recalled %q, %v; want %q", got, ok, synced.path)
+	}
+}
+
+// flatten expands a tea.Batch into its commands; a plain message becomes one.
+func flatten(m tea.Msg) []tea.Cmd {
+	if b, ok := m.(tea.BatchMsg); ok {
+		var out []tea.Cmd
+		for _, c := range b {
+			if c != nil {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	return []tea.Cmd{func() tea.Msg { return m }}
 }

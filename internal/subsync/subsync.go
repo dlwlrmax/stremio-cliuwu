@@ -62,9 +62,47 @@ func Cleanup() {
 	dir := tmp.dir
 	tmp.dir = ""
 	tmp.Unlock()
+	done.Lock()
+	done.m = nil
+	done.Unlock()
 	if dir != "" {
 		os.RemoveAll(dir)
 	}
+}
+
+// done holds finished syncs by a key the caller chooses, so a subtitle synced
+// once is not synced again when its list is opened a second time.
+var done struct {
+	sync.Mutex
+	m map[string]string
+}
+
+// Remember records the retimed file for key. Paths outside the temp directory
+// are ignored.
+func Remember(key, path string) {
+	if !Owns(path) {
+		return
+	}
+	done.Lock()
+	defer done.Unlock()
+	if done.m == nil {
+		done.m = map[string]string{}
+	}
+	done.m[key] = path
+}
+
+// Recall returns the file remembered for key, if it is still there.
+func Recall(key string) (string, bool) {
+	done.Lock()
+	path, ok := done.m[key]
+	done.Unlock()
+	if !ok || !Owns(path) {
+		return "", false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	return path, true
 }
 
 // Owns reports whether path is a file inside the temp directory. Symlinks are

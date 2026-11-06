@@ -317,3 +317,34 @@ func TestSyncAlassErrorKeepsTheChain(t *testing.T) {
 		t.Errorf("error %q still has the backtrace hint", err)
 	}
 }
+
+func TestRememberRecall(t *testing.T) {
+	Cleanup()
+	t.Cleanup(Cleanup)
+	if _, ok := Recall("k"); ok {
+		t.Fatal("Recall found something nobody remembered")
+	}
+
+	fakeAlass(t, `cp "$2" "$3"`)
+	srv := server(t, map[string]string{"/a": srtBody, "/b": srtBody})
+	out, err := Sync(context.Background(), srv.URL+"/a", srv.URL+"/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	Remember("k", out)
+	if got, ok := Recall("k"); !ok || got != out {
+		t.Fatalf("Recall = %q, %v; want %q, true", got, ok, out)
+	}
+
+	// A path the package doesn't own is never remembered.
+	Remember("evil", "/etc/passwd")
+	if _, ok := Recall("evil"); ok {
+		t.Error("Recall returned a path outside the temp directory")
+	}
+
+	// The file going away (or Cleanup) means there is nothing to load.
+	os.Remove(out)
+	if _, ok := Recall("k"); ok {
+		t.Error("Recall returned a file that no longer exists")
+	}
+}

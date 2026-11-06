@@ -274,6 +274,7 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			s.synced = map[string]string{}
 		}
 		s.synced[m.path] = m.sub.URL
+		subsync.Remember(s.syncKey(m.sub), m.path)
 		sub := m.sub
 		s.pending = &sub
 		return s, ctx.player.AddLocalSubtitle(m.path, langs.Name(m.sub.Lang), m.sub.Lang)
@@ -329,6 +330,19 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 			s.list.ClearNum()
 			sub := s.subs[s.shown[i]]
 			s.pending = &sub
+
+			// Synced earlier this session: that copy is the one with the
+			// right timing, so it goes in instead of the original.
+			if path, ok := subsync.Recall(s.syncKey(sub)); ok {
+				if s.synced == nil {
+					s.synced = map[string]string{}
+				}
+				s.synced[path] = sub.URL
+				return s, tea.Batch(
+					ctx.player.AddLocalSubtitle(path, langs.Name(sub.Lang), sub.Lang),
+					toast("loading synced "+langs.Name(sub.Lang)+" subtitles…"),
+				)
+			}
 
 			// Stays open until mpv confirms. The first pick often has the
 			// wrong timing, so if it fails you're still on the list to try
@@ -411,6 +425,13 @@ func (s *subsScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	}
 	return s, s.busy.update(msg)
+}
+
+// syncKey names a synced subtitle: the same list entry for the same video.
+// Another episode, or the same sub against a different file, is a different
+// key, so a retimed copy is never loaded where its timing doesn't apply.
+func (s *subsScreen) syncKey(sub stremio.Subtitle) string {
+	return s.query.VideoID + "\x00" + sub.URL
 }
 
 // cancelSync stops a running sync, so leaving the screen doesn't leave alass
