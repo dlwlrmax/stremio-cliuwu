@@ -140,6 +140,7 @@ type Player struct {
 	replacing  bool                   // suppress the end-file/stop that a replace generates
 	prefetched bool                   // next episode already surfaced for this request
 	ended      bool                   // the current file played to its end
+	menu       *subMenu               // the subtitle list on screen in mpv, if any
 	autoSubbed bool                   // subtitle autoload already attempted for this request
 	subSeen    bool                   // a subtitle track was active in the current file
 	loadedAt   time.Time              // when the current file finished loading
@@ -351,6 +352,10 @@ func (p *Player) spawn() error {
 	}
 	if cfg.AudioLang != "" {
 		args = append(args, "--alang="+mpvLangList(cfg.AudioLang))
+	}
+
+	if script := scriptPath(); script != "" {
+		args = append(args, "--script="+script)
 	}
 
 	cmd := exec.Command(bin, args...)
@@ -570,6 +575,8 @@ func (p *Player) dispatch(m map[string]any) {
 	case "end-file":
 		reason, _ := m["reason"].(string)
 		p.onEndFile(reason)
+	case "client-message":
+		p.onClientMessage(m["args"])
 	case "shutdown":
 		p.gone()
 	}

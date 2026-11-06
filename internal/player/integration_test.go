@@ -450,3 +450,48 @@ func TestIntegrationAutoloaderPrefersSyncedCopy(t *testing.T) {
 	default:
 	}
 }
+
+// Alt+s inside mpv: the script asks the app, the app answers with a menu
+// drawn by mpv, and the answer loads the chosen subtitle.
+func TestIntegrationSubtitleMenuInMpv(t *testing.T) {
+	e := itSetup(t)
+	e.fakeSubAddon(t, "eng", 0)
+
+	e.p.play(seriesReq(e.vid, "ttM", 1))
+	e.loaded(t)
+	itWait(t, 10*time.Second, "autoloaded plugin track", func() bool { return e.externalSubs() == 1 })
+
+	// The key itself: the binding the script registers.
+	if _, err := e.p.command("script-binding", "stremio_subs/stremio-subs"); err != nil {
+		t.Fatal(err)
+	}
+	var menu *subMenu
+	itWait(t, 10*time.Second, "the app to build the menu", func() bool {
+		e.p.mu.Lock()
+		defer e.p.mu.Unlock()
+		menu = e.p.menu
+		return menu != nil
+	})
+	if len(menu.subs) == 0 {
+		t.Fatal("menu has no rows")
+	}
+	itWait(t, 5*time.Second, "mpv to show the menu", func() bool {
+		resp, err := e.p.command("get_property", "user-data/mpv/console/open")
+		return err == nil && resp["data"] == true
+	})
+
+	// Answering it (what the menu's submit does) adds the track.
+	before := e.externalSubs()
+	if _, err := e.p.command("script-message", "stremio-cliuwu-subs-pick", fmt.Sprint(menu.id), "1"); err != nil {
+		t.Fatal(err)
+	}
+	itWait(t, 10*time.Second, "chosen subtitle to load", func() bool { return e.externalSubs() > before })
+
+	// An answer for a menu that is no longer current does nothing.
+	n := e.externalSubs()
+	e.p.command("script-message", "stremio-cliuwu-subs-pick", "999999", "1")
+	time.Sleep(time.Second)
+	if got := e.externalSubs(); got != n {
+		t.Errorf("a stale answer loaded a track: %d -> %d", n, got)
+	}
+}
