@@ -596,6 +596,10 @@ func (s *settingsScreen) rebuild() {
 			ctx.cfg.AutoNext = !ctx.cfg.AutoNext
 			return s.save()
 		}},
+		{label: "autoplay next episode", sub: "pick a safe stream for it too (same release, cached or in your library); needs open next episode", badge: onOff(c.AutoPlayNext), act: func() tea.Cmd {
+			ctx.cfg.AutoPlayNext = !ctx.cfg.AutoPlayNext
+			return s.save()
+		}},
 		{label: "close mpv on exit", sub: "off leaves playback running after you quit", badge: onOff(c.CloseMpvOnExit), act: func() tea.Cmd {
 			ctx.cfg.CloseMpvOnExit = !ctx.cfg.CloseMpvOnExit
 			return s.save()

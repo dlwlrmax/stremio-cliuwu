@@ -437,7 +437,10 @@ func (s *streamScreen) hop(delta int) tea.Cmd {
 // the two can't drift — a queued episode has to record exactly the same
 // history and episode context as one played directly.
 func (s *streamScreen) request(st stremio.Stream, resume float64) player.PlayRequest {
-	t := s.target
+	return buildRequest(s.target, st, resume)
+}
+
+func buildRequest(t streamTarget, st stremio.Stream, resume float64) player.PlayRequest {
 
 	entry := store.HistoryEntry{
 		Name:    t.Meta.Name,

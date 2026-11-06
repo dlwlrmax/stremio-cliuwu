@@ -115,3 +115,16 @@ func TestEmbeddedPrefKeepsTrackAndSkipsNoChange(t *testing.T) {
 		t.Errorf("track title should not outlive the pick, got %+v", p)
 	}
 }
+
+// An existing config, from before the setting, gets autoplay on; once it has
+// been migrated, turning it off sticks.
+func TestAutoPlayNextDefaultsOnAndStaysOff(t *testing.T) {
+	old := AppConfig{Version: 15}
+	if !old.SetDefaults() || !old.AutoPlayNext {
+		t.Fatalf("migrated config: AutoPlayNext = %v, want true", old.AutoPlayNext)
+	}
+	old.AutoPlayNext = false
+	if old.SetDefaults(); old.AutoPlayNext {
+		t.Error("SetDefaults turned autoplay back on after the user turned it off")
+	}
+}

@@ -7,7 +7,7 @@ import (
 // configVersion is bumped whenever a new field needs a non-zero default.
 // Without this, adding a bool to the struct silently gives every existing
 // install `false`, because encoding/json just leaves absent fields alone.
-const configVersion = 15
+const configVersion = 16
 
 type AppConfig struct {
 	Version          int    `json:"version"`
@@ -24,6 +24,7 @@ type AppConfig struct {
 	HistoryMax     int      `json:"history_max"`
 	OmdbKey        string   `json:"omdb_key"`
 	AutoNext       bool     `json:"auto_next"`
+	AutoPlayNext   bool     `json:"auto_play_next"` // pick the next episode's stream too
 	AutoResume     bool     `json:"auto_resume"`
 	CloseMpvOnExit bool     `json:"close_mpv_on_exit"`
 	CachedFirst    bool     `json:"cached_first"`
@@ -176,6 +177,11 @@ func (c *AppConfig) SetDefaults() bool {
 	// it is also handed to mpv as --alang.
 	if c.Version < 15 && c.AudioLang == "" {
 		c.AudioLang = "jpn,chi,eng"
+		changed = true
+	}
+
+	if c.Version < 16 {
+		c.AutoPlayNext = true // opt out, not in: the point is not having to pick
 		changed = true
 	}
 

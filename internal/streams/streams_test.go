@@ -78,3 +78,35 @@ func TestBlockedMatchesWholeWordsAndPrefixes(t *testing.T) {
 		t.Error("blank terms must be ignored")
 	}
 }
+
+func mkStream(url, group string, cached *bool, name string) stremio.Stream {
+	s := stremio.Stream{URL: url, Name: name, Cached: cached}
+	s.BehaviorHints.BingeGroup = group
+	return s
+}
+
+func TestAutoPick(t *testing.T) {
+	yes, no := true, false
+	cases := []struct {
+		name    string
+		in      []stremio.Stream
+		binge   string
+		blocked []string
+		want    string // "" = nothing is safe to pick
+	}{
+		{"same release wins", []stremio.Stream{mkStream("a", "", &yes, ""), mkStream("b", "grp", &no, "")}, "grp", nil, "b"},
+		{"cached link is safe", []stremio.Stream{mkStream("a", "", &yes, "")}, "", nil, "a"},
+		{"library file is safe", []stremio.Stream{mkStream("a", "", nil, "📌 Library")}, "", nil, "a"},
+		{"unknown, not same release: no guess", []stremio.Stream{mkStream("a", "", nil, "")}, "grp", nil, ""},
+		{"not cached: no guess", []stremio.Stream{mkStream("a", "", &no, "")}, "", nil, ""},
+		{"no url is not playable", []stremio.Stream{mkStream("", "grp", &yes, "")}, "grp", nil, ""},
+		{"blocked term is skipped", []stremio.Stream{mkStream("a", "grp", &yes, "CAM rip"), mkStream("b", "", &yes, "web")}, "grp", []string{"cam"}, "b"},
+		{"empty", nil, "grp", nil, ""},
+	}
+	for _, c := range cases {
+		got, ok := AutoPick(c.in, "", c.binge, true, c.blocked)
+		if (c.want == "") == ok || got.URL != c.want {
+			t.Errorf("%s: AutoPick = %q, %v; want %q", c.name, got.URL, ok, c.want)
+		}
+	}
+}

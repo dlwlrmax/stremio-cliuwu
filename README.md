@@ -116,7 +116,11 @@ selecting something you've partly watched asks whether to resume or start over.
 
 **Next episode loads itself.** Near the end of an episode it fetches the next
 one's streams and puts them on screen, so when the current one ends you just
-pick and go.
+pick and go. With **autoplay next episode** on (the default) it also picks for
+you, but only a stream it would stand behind: the same release as the last
+episode, a file in your library, or a cached link. Anything less certain and
+you get the list instead. Pick or queue (`n`) something yourself and that wins;
+press `n` on the autopicked stream to take it back off.
 
 **Watched isn't a flat percentage.** A ten minute cartoon and a two hour film
 shouldn't need the same fraction watched to count as finished, so the

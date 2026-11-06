@@ -221,3 +221,29 @@ func Sort(streams []stremio.Stream, preferred, binge string, cachedFirst bool) [
 	}
 	return streams
 }
+
+// AutoPick chooses a stream to play without asking, or says there isn't one
+// it would stand behind.
+//
+// The list is sorted exactly as the picker sorts it, and the top entry is
+// taken only if it is a safe bet: the same release as the last episode
+// (binge group), a file already in your library, or a cached link. Anything
+// else might be a CAM, a dead torrent or a different dub, and guessing wrong
+// costs more than showing the list.
+func AutoPick(all []stremio.Stream, preferred, binge string, cachedFirst bool, blocked []string) (stremio.Stream, bool) {
+	var ok []stremio.Stream
+	for _, s := range all {
+		if s.URL != "" && !Blocked(s, blocked) {
+			ok = append(ok, s)
+		}
+	}
+	if len(ok) == 0 {
+		return stremio.Stream{}, false
+	}
+	top := Sort(ok, preferred, binge, cachedFirst)[0]
+	sameRelease := binge != "" && top.BehaviorHints.BingeGroup == binge
+	if sameRelease || InLibrary(top) || Cached(top) == 1 {
+		return top, true
+	}
+	return stremio.Stream{}, false
+}
