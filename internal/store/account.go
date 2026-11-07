@@ -62,7 +62,7 @@ type libraryItemSt struct {
 	TimesWatched   int     `json:"timesWatched"`          // >0 means finished at least once
 	FlaggedWatched int     `json:"flaggedWatched"`        // manual tick
 	Duration       float64 `json:"duration"`              // ms
-	VideoID        string  `json:"videoId"`               // "id:s:e" for series
+	VideoID        string  `json:"video_id"`              // "id:s:e" for series; the server drops any other spelling
 	LastWatched    string  `json:"lastWatched,omitempty"` // RFC3339
 	Watched        string  `json:"watched,omitempty"`     // per-episode bitfield, series only
 }
@@ -233,13 +233,31 @@ func datastorePut(authKey string, items []libraryItem) error {
 }
 
 // pullLibrary fetches the whole remote library and merges it in, returning the
-// number of items applied.
-func pullLibrary(authKey string) (int, error) {
+// number of items applied and what the server sent.
+func pullLibrary(authKey string) (int, []libraryItem, error) {
 	items, err := DatastoreGet(authKey, "libraryItem", nil, true)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return MergeLibrary(items), nil
+	return MergeLibrary(items), items, nil
+}
+
+// selectPush picks the local titles worth sending. A title goes up when the
+// server lacks it or holds an older copy. It also goes up when the server's
+// copy is no newer than ours but carries no episode pointer (blank): earlier
+// builds sent the pointer under a name the server drops, and a device reading
+// such a copy can't tell which episode the progress is for. A blank copy that
+// is newer than ours stays untouched — it is another device's progress, and
+// overwriting it would lose that.
+func selectPush(local []LocalLibraryEntry, remote map[string]int64, blank map[string]bool) []libraryItem {
+	var changes []libraryItem
+	for _, e := range local {
+		if rm, ok := remote[e.ID]; ok && rm >= e.MTime && !(blank[e.ID] && rm <= e.MTime) {
+			continue // the server's copy is at least as new, and usable
+		}
+		changes = append(changes, e.toLibraryItem())
+	}
+	return changes
 }
 
 // syncAccount does one two-way pass: read the remote metadata, pull what's
@@ -256,17 +274,18 @@ func syncAccount(authKey string) (pulled, pushed int, err error) {
 		remote[m.ID] = m.MtimeMs / 1000
 	}
 
-	if pulled, err = pullLibrary(authKey); err != nil {
+	pulled, items, err := pullLibrary(authKey)
+	if err != nil {
 		return pulled, 0, err
 	}
-
-	var changes []libraryItem
-	for _, e := range LocalLibrary() {
-		if rm, ok := remote[e.ID]; ok && rm >= e.MTime {
-			continue // the server's copy is at least as new
+	blank := map[string]bool{}
+	for _, it := range items {
+		if !it.Removed && it.State.VideoID == "" {
+			blank[it.ID] = true
 		}
-		changes = append(changes, e.toLibraryItem())
 	}
+
+	changes := selectPush(LocalLibrary(), remote, blank)
 	if len(changes) == 0 {
 		return pulled, 0, nil
 	}
