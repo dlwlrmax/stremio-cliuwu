@@ -1,33 +1,43 @@
 package player
 
-import "testing"
+import (
+	"testing"
 
-// A hand pick in mpv's own menu is only worth remembering when it is a track
-// inside the file: external ones are what our sub-add produced, and a track
-// with no language tag could never be matched on the next episode.
-func TestEmbeddedSubAt(t *testing.T) {
-	tracks := []any{
+	"stremio-cliuwu/internal/store"
+)
+
+// A hand-picked subtitle track is remembered by language, and by title when
+// it is inside the file. An external one is an addon subtitle already loaded,
+// chosen again from the track rows. A track with no language tag could never
+// be matched on the next episode.
+func TestSubPickPref(t *testing.T) {
+	raw := []any{
 		map[string]any{"type": "video", "id": float64(1)},
 		map[string]any{"type": "sub", "id": float64(1), "lang": "eng", "title": "Full"},
 		map[string]any{"type": "sub", "id": float64(2), "lang": "fre"},
-		map[string]any{"type": "sub", "id": float64(3), "external": true, "lang": "vie"},
+		map[string]any{"type": "sub", "id": float64(3), "external": true, "lang": "vie", "title": "Vietnamese"},
 		map[string]any{"type": "sub", "id": float64(4)},
 	}
+	subs := tracks(raw, "sub")
 	cases := []struct {
-		sid         int
-		lang, title string
-		ok          bool
+		sid  int
+		want store.ShowSubPref
+		ok   bool
 	}{
-		{1, "English", "Full", true},
-		{2, "French", "", true},
-		{3, "", "", false}, // external: our own sub-add
-		{4, "", "", false}, // no language tag
-		{9, "", "", false}, // not in the list
+		{1, store.ShowSubPref{Lang: "English", Src: "embedded", Track: "Full"}, true},
+		{2, store.ShowSubPref{Lang: "French", Src: "embedded"}, true},
+		{3, store.ShowSubPref{Lang: "Vietnamese", Src: "plugin"}, true}, // external: title is ours, not the file's
+		{4, store.ShowSubPref{}, false},                                 // no language tag
+		{9, store.ShowSubPref{}, false},                                 // not in the list
 	}
 	for _, c := range cases {
-		lang, title, ok := embeddedSubAt(tracks, c.sid)
-		if lang != c.lang || title != c.title || ok != c.ok {
-			t.Errorf("sid %d: got (%q, %q, %v), want (%q, %q, %v)", c.sid, lang, title, ok, c.lang, c.title, c.ok)
+		var got store.ShowSubPref
+		tr, ok := trackAt(subs, c.sid)
+		if ok {
+			got, ok = subPickPref(tr)
+		}
+		if got != c.want || ok != c.ok {
+			t.Errorf("sid %d: got (%+v, %v), want (%+v, %v)", c.sid, got, ok, c.want, c.ok)
 		}
 	}
 }
@@ -89,6 +99,49 @@ func TestAddLocalSubtitleRejectsForeignPath(t *testing.T) {
 		}
 		if msg.URL != path {
 			t.Errorf("%q: msg.URL = %q, want the path echoed back", path, msg.URL)
+		}
+	}
+}
+
+// The audio autoload ranks the show's remembered language first, breaks ties
+// in that language on the remembered title, and reads tracks the way mpv
+// reports them.
+func TestAudioRanking(t *testing.T) {
+	raw := []any{
+		map[string]any{"type": "video", "id": float64(1)},
+		map[string]any{"type": "audio", "id": float64(1), "lang": "jpn", "default": true, "selected": true},
+		map[string]any{"type": "audio", "id": float64(2), "lang": "eng", "title": "Stereo"},
+		map[string]any{"type": "audio", "id": float64(3), "lang": "eng", "title": "Commentary"},
+		map[string]any{"type": "audio", "id": float64(4), "lang": "  "},
+	}
+	ts := tracks(raw, "audio")
+	if len(ts) != 4 || ts[0].lang != "Japanese" || !ts[0].selected || !ts[0].def || ts[3].lang != "" {
+		t.Fatalf("tracks: %+v", ts)
+	}
+	pick := func(prefs []string, pref store.ShowAudioPref) int {
+		best := ts[0]
+		for _, tr := range ts[1:] {
+			if audioBetter(tr, best, prefs, pref) {
+				best = tr
+			}
+		}
+		return best.id
+	}
+	cases := []struct {
+		prefs []string
+		pref  store.ShowAudioPref
+		want  int
+	}{
+		{[]string{"Japanese", "English"}, store.ShowAudioPref{}, 1},
+		{[]string{"English", "Japanese"}, store.ShowAudioPref{}, 2}, // first English by id
+		{[]string{"English", "Japanese"}, store.ShowAudioPref{Lang: "English", Track: "Commentary"}, 3},
+		{[]string{"German"}, store.ShowAudioPref{}, 1}, // nothing listed: default, then id
+		// A title remembered for another language must not steer this one.
+		{[]string{"French"}, store.ShowAudioPref{Lang: "French", Track: "Commentary"}, 1},
+	}
+	for _, c := range cases {
+		if got := pick(c.prefs, c.pref); got != c.want {
+			t.Errorf("prefs=%v pref=%+v: got %d want %d", c.prefs, c.pref, got, c.want)
 		}
 	}
 }

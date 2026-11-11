@@ -1,10 +1,6 @@
 package store
 
-import (
-	"stremio-cliuwu/internal/jsonio"
-	"stremio-cliuwu/internal/paths"
-	"sync"
-)
+import "stremio-cliuwu/internal/paths"
 
 // Per-show subtitle preferences.
 //
@@ -33,41 +29,13 @@ type ShowSubPref struct {
 	Track string `json:"track,omitempty"`
 }
 
-// subPrefs is loaded once at startup and kept in memory; every Set/Delete
-// rewrites the file. The mutex is needed because the player's read loop and
-// the TUI both reach for it.
-var subPrefs = struct {
-	sync.RWMutex
-	m map[string]ShowSubPref
-}{m: map[string]ShowSubPref{}}
+var subPrefs = newShowPrefs[ShowSubPref](paths.SubsPrefsFile)
 
-// subPrefsWrite orders saves. A save snapshots the map and then writes it, and
-// two of those interleaving could leave the older snapshot on disk. Held for
-// the whole update, but not by readers, who only take subPrefs.RWMutex.
-var subPrefsWrite sync.Mutex
-
-// LoadSubPrefs reads sub_prefs.json into memory. A missing or corrupt file is
-// an empty map, never an error: a bad preference shouldn't stop playback.
-func LoadSubPrefs() {
-	m := map[string]ShowSubPref{}
-	if err := jsonio.Read(paths.SubsPrefsFile(), &m); err != nil || m == nil {
-		m = map[string]ShowSubPref{}
-	}
-	subPrefs.Lock()
-	subPrefs.m = m
-	subPrefs.Unlock()
-}
+// LoadSubPrefs reads sub_prefs.json into memory.
+func LoadSubPrefs() { subPrefs.load() }
 
 // GetSubPref looks up a show's preference.
-func GetSubPref(showID string) (ShowSubPref, bool) {
-	if showID == "" {
-		return ShowSubPref{}, false
-	}
-	subPrefs.RLock()
-	defer subPrefs.RUnlock()
-	p, ok := subPrefs.m[showID]
-	return p, ok
-}
+func GetSubPref(showID string) (ShowSubPref, bool) { return subPrefs.get(showID) }
 
 // SetSubPref remembers a show's language and source, overwriting any previous
 // choice for that show.
@@ -82,50 +50,11 @@ func SetEmbeddedPref(showID, lang, track string) {
 }
 
 func setSubPref(showID string, pref ShowSubPref) {
-	if showID == "" || pref.Lang == "" {
+	if pref.Lang == "" {
 		return
 	}
-	subPrefsWrite.Lock()
-	defer subPrefsWrite.Unlock()
-
-	subPrefs.Lock()
-	if cur, ok := subPrefs.m[showID]; ok && cur == pref {
-		subPrefs.Unlock()
-		return
-	}
-	subPrefs.m[showID] = pref
-	snapshot := cloneSubPrefs(subPrefs.m)
-	subPrefs.Unlock()
-
-	jsonio.Write(paths.SubsPrefsFile(), snapshot)
+	subPrefs.set(showID, pref)
 }
 
 // DeleteSubPref forgets a show, sending it back to the global default.
-func DeleteSubPref(showID string) {
-	if showID == "" {
-		return
-	}
-	subPrefsWrite.Lock()
-	defer subPrefsWrite.Unlock()
-
-	subPrefs.Lock()
-	if _, ok := subPrefs.m[showID]; !ok {
-		subPrefs.Unlock()
-		return
-	}
-	delete(subPrefs.m, showID)
-	snapshot := cloneSubPrefs(subPrefs.m)
-	subPrefs.Unlock()
-
-	jsonio.Write(paths.SubsPrefsFile(), snapshot)
-}
-
-// cloneSubPrefs copies the map so the file can be written without holding the
-// lock across the disk write.
-func cloneSubPrefs(m map[string]ShowSubPref) map[string]ShowSubPref {
-	out := make(map[string]ShowSubPref, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
+func DeleteSubPref(showID string) { subPrefs.del(showID) }

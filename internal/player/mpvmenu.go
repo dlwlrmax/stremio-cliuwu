@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"stremio-cliuwu/internal/langs"
 	"stremio-cliuwu/internal/paths"
+	"stremio-cliuwu/internal/store"
 	"stremio-cliuwu/internal/stremio"
 	"stremio-cliuwu/internal/subsync"
 )
@@ -43,7 +45,9 @@ type subMenu struct {
 	id      int
 	gen     uint64 // the file it was fetched for
 	videoID string
+	showID  string // PlayRequest.ShowID of the file, so a pick can be remembered
 	subs    []stremio.Subtitle
+	shipped map[string]bool // URLs that came with the stream rather than from an addon
 }
 
 var menuSeq atomic.Int64
@@ -104,6 +108,8 @@ func (p *Player) onClientMessage(raw any) {
 		if len(a) >= 3 {
 			p.sendAsync(func() { p.pickFromMenu(a[1], a[2]) })
 		}
+	case "stremio-cliuwu-audio-forget":
+		p.sendAsync(p.forgetAudioPref)
 	}
 }
 
@@ -132,7 +138,11 @@ func (p *Player) showSubMenu(req string) {
 		return
 	}
 	// With nothing from the addons the menu still opens, on the tracks alone.
-	menu := &subMenu{id: int(menuSeq.Add(1)), gen: gen, videoID: playing.VideoID, subs: subs}
+	menu := &subMenu{id: int(menuSeq.Add(1)), gen: gen, videoID: playing.VideoID, showID: playing.ShowID(),
+		subs: subs, shipped: make(map[string]bool, len(playing.Subs))}
+	for _, s := range playing.Subs {
+		menu.shipped[s.URL] = true
+	}
 	p.mu.Lock()
 	p.menu = menu
 	p.mu.Unlock()
@@ -188,6 +198,18 @@ func (p *Player) pickFromMenu(id, index string) {
 	if msg.Err != nil {
 		p.osd("couldn't load that subtitle — try another")
 		return
+	}
+	// A hand pick is this show's preference, same as one from the S screen:
+	// the next episode starts on this language. The sid change the sub-add
+	// makes is ours (see subAdd), so this is the one place it is recorded.
+	// An untagged subtitle could never be matched on another episode, so it is
+	// not worth remembering either.
+	if menu.showID != "" && strings.TrimSpace(s.Lang) != "" {
+		src := "plugin"
+		if menu.shipped[s.URL] {
+			src = "embedded"
+		}
+		store.SetSubPref(menu.showID, langs.Name(s.Lang), src)
 	}
 	p.emit(NoticeMsg{Text: "subtitles: " + langs.Name(s.Lang) + " · " + s.Label()})
 	p.emit(msg)

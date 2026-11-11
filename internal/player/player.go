@@ -121,6 +121,18 @@ type PlayRequest struct {
 	Subs      []stremio.Subtitle // shipped with the stream itself
 }
 
+// ShowID is the series this request belongs to, the key per-show subtitle
+// preferences are kept under. It is "" for a movie, for "other" (a debrid
+// library / local file) and for a series played without a queue: only an
+// episode with a next one worth carrying a preference to counts as a show.
+// Safe on a nil request.
+func (r *PlayRequest) ShowID() string {
+	if r == nil || r.MediaType != "series" || r.Queue == nil {
+		return ""
+	}
+	return r.Entry.ID
+}
+
 // ── Player ────────────────────────────────────────────────────────────────────
 
 type Player struct {
@@ -144,9 +156,9 @@ type Player struct {
 	autoSubbed bool                   // subtitle autoload already attempted for this request
 	subSeen    bool                   // a subtitle track was active in the current file
 	loadedAt   time.Time              // when the current file finished loading
-	ownSid     int                    // track id we just selected ourselves; 0 for none
-	ownSidTill time.Time              // after this, ownSid no longer excuses a change
-	pickSeq    uint64                 // bumped by each subtitle-track pick or off; newest wins
+	subPick    trackPick              // tells our subtitle switches from the user's
+	audioPick  trackPick              // the same for audio
+	addingSubs int                    // sub-add commands in flight; the sid changes they make are ours
 	addonsFn   func() []stremio.Addon // where the subtitle addons come from; fixed at New
 	playGen    uint64                 // bumped on every play(); stale subtitle fetches drop out
 	seekTo     float64                // pending resume seek, applied on file-loaded
@@ -227,12 +239,28 @@ func (p *Player) AddSubtitle(url, title, lang string) tea.Cmd {
 			title = "subtitle"
 		}
 
-		// Generous: mpv downloads the file before it answers, and some
-		// subtitle hosts are slow enough that a short wait is a false
-		// negative rather than a failure.
-		_, err := p.commandWait(30*time.Second, "sub-add", url, "select", title, lang)
+		err := p.subAdd(url, title, lang)
 		return SubtitleAddedMsg{URL: url, Title: title, Err: err}
 	}
+}
+
+// subAdd runs mpv's sub-add and selects the new track. The sid change that
+// makes is ours, whoever asked for it: the autoloader's is not a hand pick,
+// and a hand pick from the S screen or the Alt+j menu records itself.
+func (p *Player) subAdd(src, title, lang string) error {
+	p.mu.Lock()
+	p.addingSubs++
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		p.addingSubs--
+		p.mu.Unlock()
+	}()
+	// Generous: mpv downloads the file before it answers, and some subtitle
+	// hosts are slow enough that a short wait is a false negative rather than
+	// a failure.
+	_, err := p.commandWait(30*time.Second, "sub-add", src, "select", title, lang)
+	return err
 }
 
 // AddLocalSubtitle loads a subtitle file the app generated into the running
@@ -249,7 +277,7 @@ func (p *Player) AddLocalSubtitle(path, title, lang string) tea.Cmd {
 		if title == "" {
 			title = "subtitle"
 		}
-		_, err := p.commandWait(30*time.Second, "sub-add", path, "select", title, lang)
+		err := p.subAdd(path, title, lang)
 		return SubtitleAddedMsg{URL: path, Title: title, Err: err}
 	}
 }
@@ -548,7 +576,7 @@ func (p *Player) commandWait(wait time.Duration, args ...any) (map[string]any, e
 }
 
 func (p *Player) observe() {
-	props := []string{"time-pos", "duration", "pause", "media-title", "paused-for-cache", "sid"}
+	props := []string{"time-pos", "duration", "pause", "media-title", "paused-for-cache", "sid", "aid"}
 	for i, prop := range props {
 		p.command("observe_property", i+1, prop)
 	}
@@ -587,8 +615,17 @@ func (p *Player) dispatch(m map[string]any) {
 func (p *Player) onProperty(name string, data any) {
 	showID := ""
 	pickShow, pickSid, pickGen, pickSeq := "", 0, uint64(0), uint64(0)
+	audioShow, audioAid, audioGen, audioSeq := "", 0, uint64(0), uint64(0)
 	p.mu.Lock()
 	switch name {
+	case "aid":
+		// Same reading as sid below, for the audio track: a switch well after
+		// load that we did not make ourselves is the user's, and the next
+		// episode of the show should start on it. There is no "off" to
+		// remember for audio.
+		if v, on := data.(float64); on && !p.audioPick.consume(int(v)) && p.handPick() {
+			audioShow, audioAid, audioGen, audioSeq = p.now.ShowID(), int(v), p.playGen, p.audioPick.next()
+		}
 	case "time-pos":
 		if f, ok := data.(float64); ok {
 			p.state.Pos = f
@@ -612,25 +649,17 @@ func (p *Player) onProperty(name string, data any) {
 		// anything during a load are not that.
 		if v, on := data.(float64); on {
 			p.subSeen = true
-			switch {
-			case p.ownSid == int(v) && time.Now().Before(p.ownSidTill):
-				// Our own autoloader selected this one.
-				p.ownSid = 0
-			case !p.state.Loading && !p.replacing && !p.loadedAt.IsZero() &&
-				time.Since(p.loadedAt) > handPickAfter &&
-				p.now != nil && p.now.MediaType == "series" && p.now.Queue != nil:
-				// A track switch well after load is the user using mpv's own
-				// menu: mpv's --slang pick and our autoloader both land
-				// within the first moments.
-				p.pickSeq++
-				pickShow, pickSid, pickGen, pickSeq = p.now.Entry.ID, int(v), p.playGen, p.pickSeq
+			// Ours when the autoloader set the track, or when a sub-add is
+			// selecting the track it just made. Otherwise a switch well after
+			// load is the user's, in mpv's own menu or ours.
+			if !p.subPick.consume(int(v)) && p.addingSubs == 0 && p.handPick() {
+				pickShow, pickSid, pickGen, pickSeq = p.now.ShowID(), int(v), p.playGen, p.subPick.next()
 			}
 		} else if off, ok := data.(bool); ok && !off && p.subSeen &&
-			!p.state.Loading && !p.replacing &&
-			p.now != nil && p.now.MediaType == "series" && p.now.Queue != nil {
+			!p.state.Loading && !p.replacing && p.now.ShowID() != "" {
 			p.subSeen = false
-			p.pickSeq++ // a pick still being resolved is older than this
-			showID = p.now.Entry.ID
+			p.subPick.next() // a pick still being resolved is older than this
+			showID = p.now.ShowID()
 		}
 	}
 
@@ -669,7 +698,10 @@ func (p *Player) onProperty(name string, data any) {
 		go store.SetSubPref(showID, store.SubOff, "")
 	}
 	if pickShow != "" {
-		p.sendAsync(func() { p.rememberEmbeddedPick(pickGen, pickSeq, pickShow, pickSid) })
+		p.sendAsync(func() { p.rememberSubPick(pickGen, pickSeq, pickShow, pickSid) })
+	}
+	if audioShow != "" {
+		p.sendAsync(func() { p.rememberAudioPick(audioGen, audioSeq, audioShow, audioAid) })
 	}
 	if save {
 		go store.UpdatePosition(videoID, st.Pos, st.Duration)
@@ -728,8 +760,8 @@ func (p *Player) maybeAutoSubtitle() {
 	// and "other" always take the global path below.
 	var pref store.ShowSubPref
 	hasPref := false
-	if now != nil && now.MediaType == "series" && now.Queue != nil {
-		pref, hasPref = store.GetSubPref(now.Entry.ID)
+	if id := now.ShowID(); id != "" {
+		pref, hasPref = store.GetSubPref(id)
 	}
 
 	// "other" is a debrid library / local file: there is no episode id worth
@@ -940,125 +972,202 @@ func (p *Player) selectEmbeddedSub(gen uint64, lang, title string) bool {
 	if !p.isCurrent(gen) {
 		return false
 	}
-	resp, err := p.command("get_property", "track-list")
-	if err != nil {
+	raw, ok := p.trackList()
+	if !ok {
 		return false
 	}
-	raw, _ := resp["data"].([]any)
 	id, selected, ok := pickEmbeddedSub(raw, lang, title)
 	if !ok {
 		return false
 	}
-	if !selected {
-		// Armed only when a change is coming — setting the track that is
-		// already on makes no event to consume it — and disarmed if the
-		// command fails, so it can't excuse a later hand pick.
-		p.mu.Lock()
-		p.ownSid, p.ownSidTill = id, time.Now().Add(ownSidWindow)
-		p.mu.Unlock()
-		if _, err := p.command("set_property", "sid", id); err != nil {
-			p.mu.Lock()
-			p.ownSid = 0
-			p.mu.Unlock()
-			return false
-		}
+	if !selected && !p.setTrack(&p.subPick, "sid", id) {
+		return false
 	}
 	p.emit(NoticeMsg{Text: "subtitles: " + lang + " · embedded"})
 	return true
 }
 
+// trackList asks mpv for its track-list; false on any failure.
+func (p *Player) trackList() ([]any, bool) {
+	resp, err := p.command("get_property", "track-list")
+	if err != nil {
+		return nil, false
+	}
+	raw, _ := resp["data"].([]any)
+	return raw, true
+}
+
+// setTrack switches mpv to a track (prop is "sid" or "aid") on the app's own
+// behalf. The pick is armed first so the change event is not taken for the
+// user's, and disarmed if the command fails so it can't excuse a later hand
+// pick. Setting the track that is already on makes no event to consume, so
+// callers only come here for a change.
+func (p *Player) setTrack(pick *trackPick, prop string, id int) bool {
+	p.mu.Lock()
+	pick.arm(id)
+	p.mu.Unlock()
+	if _, err := p.command("set_property", prop, id); err != nil {
+		p.mu.Lock()
+		pick.disarm()
+		p.mu.Unlock()
+		return false
+	}
+	return true
+}
+
 const (
-	// handPickAfter is how long after a file loads a subtitle-track change
-	// still counts as mpv's --slang pick or our own autoload rather than the
+	// handPickAfter is how long after a file loads a track change still
+	// counts as mpv's own --slang/--alang pick or our autoload rather than the
 	// user's. Generous, because a remote stream can settle its tracks late;
 	// a real pick inside it is simply not remembered.
 	handPickAfter = 3 * time.Second
-	// ownSidWindow is how long our own track selection waits for its event
+	// ownPickWindow is how long our own track selection waits for its event
 	// to come back through a busy read loop.
-	ownSidWindow = 5 * time.Second
+	ownPickWindow = 5 * time.Second
 )
 
-// rememberEmbeddedPick records a track the user switched to in mpv's own
-// menu, so the next episode of the show starts on it. Only a track inside the
-// file qualifies; see embeddedSubAt. Runs off the read loop (it asks mpv).
+// trackPick tells the app's own track switches from the user's, for one kind
+// of track. Guarded by Player.mu.
+type trackPick struct {
+	own  int       // track id we just selected ourselves; 0 for none
+	till time.Time // after this, own no longer excuses a change
+	seq  uint64    // bumped by each hand pick (or off); the newest wins
+}
+
+func (t *trackPick) arm(id int) { t.own, t.till = id, time.Now().Add(ownPickWindow) }
+func (t *trackPick) disarm()    { t.own = 0 }
+
+// consume reports whether a change to this track is the one we armed for, and
+// uses it up.
+func (t *trackPick) consume(id int) bool {
+	if t.own != id || !time.Now().Before(t.till) {
+		return false
+	}
+	t.own = 0
+	return true
+}
+
+// next gives a new hand pick its place in line.
+func (t *trackPick) next() uint64 {
+	t.seq++
+	return t.seq
+}
+
+// stale reports whether a pick has been overtaken by a newer one.
+func (t *trackPick) stale(seq uint64) bool { return t.seq != seq }
+
+// handPick reports whether a track change arriving now, for the playing file,
+// would be the user's: well after load, for a show worth remembering it for.
+// mpv's own --slang/--alang pick and our autoloader both land within the
+// first moments. Called with p.mu held.
+func (p *Player) handPick() bool {
+	return !p.state.Loading && !p.replacing && !p.loadedAt.IsZero() &&
+		time.Since(p.loadedAt) > handPickAfter && p.now.ShowID() != ""
+}
+
+// rememberSubPick records a subtitle track the user switched to, in mpv's own
+// menu or ours, so the next episode of the show starts on it. Runs off the
+// read loop (it asks mpv).
 //
 // seq is the pick's place in line: while this waits on mpv the user may have
 // picked again or switched subtitles off, and the newer one has to win.
-func (p *Player) rememberEmbeddedPick(gen, seq uint64, showID string, sid int) {
-	resp, err := p.command("get_property", "track-list")
-	if err != nil {
+func (p *Player) rememberSubPick(gen, seq uint64, showID string, sid int) {
+	raw, ok := p.trackList()
+	if !ok {
 		return
 	}
 	p.mu.Lock()
-	stale := p.playGen != gen || p.pickSeq != seq
+	stale := p.playGen != gen || p.subPick.stale(seq)
 	p.mu.Unlock()
 	if stale {
 		return
 	}
-	raw, _ := resp["data"].([]any)
-	if lang, title, ok := embeddedSubAt(raw, sid); ok {
-		store.SetEmbeddedPref(showID, lang, title)
+	t, ok := trackAt(tracks(raw, "sub"), sid)
+	if !ok {
+		return
+	}
+	if pref, ok := subPickPref(t); ok {
+		if pref.Src == "embedded" {
+			store.SetEmbeddedPref(showID, pref.Lang, pref.Track)
+		} else {
+			store.SetSubPref(showID, pref.Lang, pref.Src)
+		}
 	}
 }
 
-// subTrack is one subtitle entry from mpv's track-list.
-type subTrack struct {
+// subPickPref is what a hand-picked subtitle track is remembered as: an
+// in-file track by language and title, an external one (an addon subtitle
+// already loaded, chosen again from the track rows) by language alone, since
+// the file it came from belongs to this episode. A track with no language tag
+// could never be matched on another episode, so it is not remembered.
+func subPickPref(t track) (store.ShowSubPref, bool) {
+	if t.lang == "" {
+		return store.ShowSubPref{}, false
+	}
+	if t.external {
+		return store.ShowSubPref{Lang: t.lang, Src: "plugin"}, true
+	}
+	return store.ShowSubPref{Lang: t.lang, Src: "embedded", Track: t.title}, true
+}
+
+// track is one entry from mpv's track-list.
+type track struct {
 	id       int
 	lang     string // canonical name, "" when the file does not tag one
 	title    string
 	external bool
 	selected bool
+	def      bool
 }
 
-// subTracks reads the subtitle entries out of mpv's track-list.
-func subTracks(tracks []any) []subTrack {
-	var out []subTrack
-	for _, it := range tracks {
+// tracks reads the entries of one type ("sub", "audio") out of mpv's
+// track-list.
+func tracks(raw []any, typ string) []track {
+	var out []track
+	for _, it := range raw {
 		m, ok := it.(map[string]any)
 		if !ok {
 			continue
 		}
-		if t, _ := m["type"].(string); t != "sub" {
+		if t, _ := m["type"].(string); t != typ {
 			continue
 		}
 		id, ok := m["id"].(float64)
 		if !ok {
 			continue
 		}
-		st := subTrack{id: int(id)}
+		tr := track{id: int(id)}
 		if l, _ := m["lang"].(string); strings.TrimSpace(l) != "" {
-			st.lang = langs.Name(l)
+			tr.lang = langs.Name(l)
 		}
-		st.title, _ = m["title"].(string)
-		st.external, _ = m["external"].(bool)
-		st.selected, _ = m["selected"].(bool)
-		out = append(out, st)
+		tr.title, _ = m["title"].(string)
+		tr.external, _ = m["external"].(bool)
+		tr.selected, _ = m["selected"].(bool)
+		tr.def, _ = m["default"].(bool)
+		if !tr.def {
+			// mpv versions disagree on the key: "default" vs "is-default".
+			tr.def, _ = m["is-default"].(bool)
+		}
+		out = append(out, tr)
 	}
 	return out
 }
 
-// embeddedSubAt reports the language and title of the subtitle track with this
-// id when it is a track inside the file. External tracks are what our own
-// sub-add made, and a track with no language tag could never be matched on
-// another episode, so neither is worth remembering.
-func embeddedSubAt(tracks []any, sid int) (lang, title string, ok bool) {
-	for _, t := range subTracks(tracks) {
-		if t.id != sid {
-			continue
+// trackAt finds the track with this id.
+func trackAt(ts []track, id int) (track, bool) {
+	for _, t := range ts {
+		if t.id == id {
+			return t, true
 		}
-		if t.external || t.lang == "" {
-			return "", "", false
-		}
-		return t.lang, t.title, true
 	}
-	return "", "", false
+	return track{}, false
 }
 
 // pickEmbeddedSub finds the in-file subtitle track for a language. When
 // several share it, the one with the remembered title wins and the first is the
 // fallback. selected reports that mpv already has it on.
-func pickEmbeddedSub(tracks []any, lang, title string) (id int, selected, ok bool) {
-	for _, t := range subTracks(tracks) {
+func pickEmbeddedSub(raw []any, lang, title string) (id int, selected, ok bool) {
+	for _, t := range tracks(raw, "sub") {
 		if t.external || t.lang != lang {
 			continue
 		}
@@ -1129,17 +1238,23 @@ func (p *Player) addSubtitle(gen uint64, s stremio.Subtitle) bool {
 // reading mpv's own track-list. Every failure returns silently — a stream
 // without a readable track-list must not break playback.
 //
-// Ranking: purely the user's preference order; languages not listed come
-// last. Ties break on default, then lowest id.
+// Ranking: the show's remembered language first, if the user switched audio
+// by hand on an earlier episode, then the user's preference order; languages
+// not listed come last. Within the remembered language the remembered track
+// title wins; other ties break on default, then lowest id.
 func (p *Player) maybeAutoAudio() {
 	p.mu.Lock()
 	order := p.cfg.AudioLang
+	now := p.now
+	gen := p.playGen
 	p.mu.Unlock()
 
-	if order == "" {
-		return
-	}
 	prefs := langs.Preferred(order)
+	var pref store.ShowAudioPref
+	if sp, ok := store.GetAudioPref(now.ShowID()); ok {
+		pref = sp
+		prefs = append([]string{sp.Lang}, slices.DeleteFunc(prefs, func(l string) bool { return l == sp.Lang })...)
+	}
 	if len(prefs) == 0 {
 		return
 	}
@@ -1147,78 +1262,92 @@ func (p *Player) maybeAutoAudio() {
 	// Off the read loop: command() waits for a reply only readLoop can
 	// deliver, so calling it from here in-line would stall every update.
 	p.sendAsync(func() {
-		resp, err := p.command("get_property", "track-list")
-		if err != nil {
+		if !p.isCurrent(gen) {
 			return
 		}
-		raw, _ := resp["data"].([]any)
-
-		var tracks []audioTrack
-		for _, it := range raw {
-			m, ok := it.(map[string]any)
-			if !ok {
-				continue
-			}
-			if t, _ := m["type"].(string); t != "audio" {
-				continue
-			}
-			id, ok := m["id"].(float64)
-			if !ok {
-				continue
-			}
-			lang, _ := m["lang"].(string)
-			title, _ := m["title"].(string)
-			def, _ := m["default"].(bool)
-			if !def {
-				// mpv versions disagree on the key: "default" vs "is-default".
-				def, _ = m["is-default"].(bool)
-			}
-			tracks = append(tracks, audioTrack{id: int(id), lang: lang, title: title, def: def})
+		raw, ok := p.trackList()
+		// The read can outlast an episode change; what came back would then
+		// be the new file's tracks, ranked for the old one.
+		if !ok || !p.isCurrent(gen) {
+			return
 		}
+		ts := tracks(raw, "audio")
 
 		// Nothing to choose between.
-		if len(tracks) < 2 {
+		if len(ts) < 2 {
 			return
 		}
 
-		best := tracks[0]
-		for _, t := range tracks[1:] {
-			if audioBetter(t, best, prefs) {
+		best := ts[0]
+		for _, t := range ts[1:] {
+			if audioBetter(t, best, prefs, pref) {
 				best = t
 			}
 		}
-
-		cur, err := p.command("get_property", "aid")
-		if err != nil {
-			return
+		if !best.selected {
+			p.setTrack(&p.audioPick, "aid", best.id)
 		}
-		if id, _ := cur["data"].(float64); int(id) == best.id {
-			return
-		}
-		p.command("set_property", "aid", best.id)
 	})
 }
 
-type audioTrack struct {
-	id    int
-	lang  string
-	title string
-	def   bool
+// rememberAudioPick records the audio track the user switched to in mpv, so
+// the next episode of the show starts on it. A track with no language tag
+// could never be matched on another episode, so it is not remembered. Runs
+// off the read loop (it asks mpv).
+//
+// seq is the pick's place in line: while this waits on mpv the user may have
+// picked again, and the newer one has to win.
+func (p *Player) rememberAudioPick(gen, seq uint64, showID string, aid int) {
+	raw, ok := p.trackList()
+	if !ok {
+		return
+	}
+	p.mu.Lock()
+	stale := p.playGen != gen || p.audioPick.stale(seq)
+	p.mu.Unlock()
+	if stale {
+		return
+	}
+	if t, ok := trackAt(tracks(raw, "audio"), aid); ok && t.lang != "" {
+		store.SetAudioPref(showID, t.lang, t.title)
+	}
 }
 
-func audioTier(t audioTrack, prefs []string) int {
-	name := langs.Name(strings.ToLower(t.lang))
-	// Rank purely by the user's preference order; unlisted languages come last.
-	if i := slices.Index(prefs, name); i >= 0 {
+// forgetAudioPref drops the show's remembered audio track, from the a menu in
+// mpv, and says on screen what happened.
+func (p *Player) forgetAudioPref() {
+	showID := p.Now().ShowID()
+	if showID == "" {
+		p.osd("audio is only remembered for series episodes")
+		return
+	}
+	if _, ok := store.GetAudioPref(showID); !ok {
+		p.osd("nothing remembered for this show — your audio list applies")
+		return
+	}
+	store.DeleteAudioPref(showID)
+	p.osd("forgotten — the next episode uses your audio list")
+}
+
+func audioTier(t track, prefs []string) int {
+	// Rank purely by the preference order; unlisted languages come last.
+	if i := slices.Index(prefs, t.lang); i >= 0 {
 		return 2 + i
 	}
 	return 2 + len(prefs)
 }
 
-// audioBetter reports whether a should be picked over b.
-func audioBetter(a, b audioTrack, prefs []string) bool {
+// audioBetter reports whether a should be picked over b. pref is the show's
+// remembered track, zero for none: among tracks in its language, the one
+// carrying its title wins.
+func audioBetter(a, b track, prefs []string, pref store.ShowAudioPref) bool {
 	if ta, tb := audioTier(a, prefs), audioTier(b, prefs); ta != tb {
 		return ta < tb
+	}
+	if pref.Track != "" && a.lang == pref.Lang && b.lang == pref.Lang {
+		if am, bm := a.title == pref.Track, b.title == pref.Track; am != bm {
+			return am
+		}
 	}
 	if a.def != b.def {
 		return a.def
@@ -1338,7 +1467,8 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	p.autoSubbed = false
 	p.subSeen = false
 	p.loadedAt = time.Time{}
-	p.ownSid = 0
+	p.subPick.disarm()
+	p.audioPick.disarm()
 	p.playGen++    // invalidates any subtitle fetch still in flight
 	p.queued = nil // choosing something now supersedes whatever was lined up
 	p.now = &req
@@ -1379,12 +1509,16 @@ func (p *Player) play(req PlayRequest) tea.Msg {
 	// flash on before the autoloader runs; "auto" otherwise, which restores
 	// --slang selection.
 	sidMode := "auto"
-	if req.MediaType == "series" && req.Queue != nil {
-		if pref, ok := store.GetSubPref(req.Entry.ID); ok && pref.Lang == store.SubOff {
+	if id := req.ShowID(); id != "" {
+		if pref, ok := store.GetSubPref(id); ok && pref.Lang == store.SubOff {
 			sidMode = "no"
 		}
 	}
 	p.command("set_property", "sid", sidMode)
+	// The audio track is just as sticky: a hand pick of track 2 would start
+	// every later file on its track 2, whatever that is. "auto" restores
+	// --alang selection; the autoloader then applies the show's own choice.
+	p.command("set_property", "aid", "auto")
 
 	if _, err := p.command("loadfile", req.URL, "replace"); err != nil {
 		p.mu.Lock()

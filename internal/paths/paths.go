@@ -37,9 +37,10 @@ func HistFile() string   { return filepath.Join(ConfigDir(), "history.json") }
 
 // SubsPrefsFile holds per-show subtitle preferences, kept beside the global
 // ones rather than inside config.json so clearing it can't touch settings.
-func SubsPrefsFile() string { return filepath.Join(ConfigDir(), "sub_prefs.json") }
-func BingeFile() string     { return filepath.Join(ConfigDir(), "binge.json") }
-func DownloadsFile() string { return filepath.Join(ConfigDir(), "downloads.json") }
+func SubsPrefsFile() string  { return filepath.Join(ConfigDir(), "sub_prefs.json") }
+func AudioPrefsFile() string { return filepath.Join(ConfigDir(), "audio_prefs.json") }
+func BingeFile() string      { return filepath.Join(ConfigDir(), "binge.json") }
+func DownloadsFile() string  { return filepath.Join(ConfigDir(), "downloads.json") }
 
 // AccountFile holds the stremio authKey, so it gets the same 0600 treatment as
 // addons.json.

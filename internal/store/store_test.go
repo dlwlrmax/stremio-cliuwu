@@ -36,6 +36,28 @@ func TestSubPrefRoundTripAndOff(t *testing.T) {
 	}
 }
 
+func TestAudioPrefRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	LoadAudioPrefs()
+
+	if _, ok := GetAudioPref("show"); ok {
+		t.Fatal("fresh store should be empty")
+	}
+	SetAudioPref("show", "", "x") // an untagged track is not a preference
+	if _, ok := GetAudioPref("show"); ok {
+		t.Fatal("empty language must not be stored")
+	}
+	SetAudioPref("show", "French", "Surround")
+	LoadAudioPrefs()
+	if p, ok := GetAudioPref("show"); !ok || p.Lang != "French" || p.Track != "Surround" {
+		t.Errorf("not persisted: %+v %v", p, ok)
+	}
+	DeleteAudioPref("show")
+	if _, ok := GetAudioPref("show"); ok {
+		t.Error("delete should forget the show")
+	}
+}
+
 func TestBingeKeepsOldGroupWhenNewIsEmpty(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	LoadBingePrefs()

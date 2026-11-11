@@ -6,20 +6,27 @@
 -- itself, and reports an addon pick back. The binding is forced so it replaces
 -- mpv's built-in Alt+j picker here, while a plain mpv keeps that one.
 --
+-- a opens the same kind of menu for the file's audio tracks. Switching there
+-- is a plain aid change, which the app sees and remembers for the show; the
+-- last row asks the app to forget that again.
+--
 -- Options (mpv.conf: script-opts-append=NAME=VALUE):
---   stremio_subs-key      the key, default Alt+j
---   stremio_subs-timeout  seconds to wait for the app's list, default 10
+--   stremio_subs-key        the subtitle key, default Alt+j
+--   stremio_subs-audio_key  the audio key, default a
+--   stremio_subs-timeout    seconds to wait for the app's list, default 10
 
 local mp = require "mp"
 local utils = require "mp.utils"
--- mp.input arrived in mpv 0.38. Without it the key says so instead of silently
--- doing nothing.
+-- mp.input arrived in mpv 0.38 and its select() in 0.39. Without it the key
+-- says so instead of silently doing nothing.
 local has_input, input = pcall(require, "mp.input")
+has_input = has_input and input.select ~= nil
 -- Set by the app when it starts mpv. Without it there is nobody to ask for
 -- addon subtitles, so the menu opens at once with the tracks alone.
 local in_app = mp.get_opt("stremio_cliuwu") ~= nil
 
 local KEY = mp.get_opt("stremio_subs-key") or "Alt+j"
+local AUDIO_KEY = mp.get_opt("stremio_subs-audio_key") or "a"
 local TIMEOUT = tonumber(mp.get_opt("stremio_subs-timeout")) or 10
 
 local menu_id = nil
@@ -92,7 +99,7 @@ end
 
 mp.add_forced_key_binding(KEY, "stremio-subs", function()
     if not has_input then
-        mp.osd_message("the subtitle menu needs mpv 0.38 or newer", 4)
+        mp.osd_message("the subtitle menu needs mpv 0.39 or newer", 4)
         return
     end
     if not in_app then
@@ -113,6 +120,51 @@ mp.add_forced_key_binding(KEY, "stremio-subs", function()
             open_menu({})
         end
     end)
+end)
+
+-- The audio menu needs nothing from the app: every track is already in mpv.
+local function audio_label(t)
+    local parts = { t.lang or "und" }
+    if t.title and t.title ~= "" then parts[#parts + 1] = t.title end
+    if t["demux-channel-count"] then
+        parts[#parts + 1] = tostring(t["demux-channel-count"]) .. "ch"
+    end
+    if t.codec then parts[#parts + 1] = t.codec end
+    return (t.selected and "● " or "  ") .. table.concat(parts, " · ")
+end
+
+mp.add_forced_key_binding(AUDIO_KEY, "stremio-audio", function()
+    if not has_input then
+        mp.osd_message("the audio menu needs mpv 0.39 or newer", 4)
+        return
+    end
+    local ids, items, current = {}, {}, 1
+    for _, t in ipairs(mp.get_property_native("track-list", {})) do
+        if t.type == "audio" then
+            ids[#ids + 1] = t.id
+            items[#items + 1] = audio_label(t)
+            if t.selected then current = #items end
+        end
+    end
+    if #ids == 0 then
+        mp.osd_message("no audio tracks", 2)
+        return
+    end
+    if in_app then
+        items[#items + 1] = "  Forget this show's remembered audio"
+    end
+    input.select({
+        prompt = "Audio:",
+        items = items,
+        default_item = current,
+        submit = function(i)
+            if ids[i] then
+                mp.set_property("aid", tostring(ids[i]))
+            else
+                mp.commandv("script-message", "stremio-cliuwu-audio-forget")
+            end
+        end,
+    })
 end)
 
 -- The app answers with {"req": "n", "id": n, "rows": [{"label","url","file"}, …]}.

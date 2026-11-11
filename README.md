@@ -143,6 +143,15 @@ didn't start, `Alt+j` stays mpv's own track picker. To use another key, put
 longer than 10 seconds to answer the menu opens with the tracks alone
 (`stremio_subs-timeout` changes that).
 
+**`a` in mpv opens the audio menu** on the same script: the file's audio
+tracks, Enter to switch. Whatever you switch to — there or with mpv's own
+keys — is remembered for the show, and the next episode starts on that
+language ahead of your global audio list; the menu's last row forgets it
+again. Subtitles picked by hand (`Alt+j`, `S`, or mpv's own menu) are
+remembered per show the same way, and so is switching them off.
+`script-opts-append=stremio_subs-audio_key=Alt+a` moves the key. Both menus
+need mpv 0.39 or newer.
+
 If a subtitle is out of time with the video, press `m` on one that's well
 timed to mark it as the reference, then `S` on the mistimed one to retime it
 to match. Only the two subtitle files are downloaded, never the video. This

@@ -113,6 +113,7 @@ func Run(args []string, buildVersion string) {
 	// addons are the user's to add — there's no account to pull them from.
 	refs := stremio.LoadAddonRefs()
 	store.LoadSubPrefs()
+	store.LoadAudioPrefs()
 	store.LoadBingePrefs()
 	firstRun := false
 	if len(refs.Items) == 0 {

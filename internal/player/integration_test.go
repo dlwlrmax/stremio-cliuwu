@@ -86,6 +86,7 @@ func itSetup(t *testing.T) *itEnv {
 	p := New(cfg, func() []stremio.Addon { return e.addons })
 	store.PublishCfg(cfg)
 	store.LoadSubPrefs()
+	store.LoadAudioPrefs()
 	store.Hist = &store.HistoryStore{}
 
 	msgs := make(chan tea.Msg, 256)
@@ -118,8 +119,11 @@ func itWait(t *testing.T, d time.Duration, what string, f func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-func (e *itEnv) sid() any {
-	resp, err := e.p.command("get_property", "sid")
+func (e *itEnv) sid() any { return e.prop("sid") }
+func (e *itEnv) aid() any { return e.prop("aid") }
+
+func (e *itEnv) prop(name string) any {
+	resp, err := e.p.command("get_property", name)
 	if err != nil {
 		return "err:" + err.Error()
 	}
@@ -254,6 +258,128 @@ func itTwoTracks(t *testing.T) string {
 	return itTracks(t, itTrack{"eng", ""}, itTrack{"fre", ""})
 }
 
+// itAudioTracks builds an 8s clip with one audio track per language, in order.
+func itAudioTracks(t *testing.T, langs ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	args := []string{"-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=d=8:s=160x90:r=10"}
+	maps := []string{"-map", "0:v"}
+	var meta []string
+	for i, l := range langs {
+		args = append(args, "-f", "lavfi", "-i", fmt.Sprintf("sine=d=8:f=%d", 440*(i+1)))
+		maps = append(maps, "-map", fmt.Sprintf("%d:a", i+1))
+		meta = append(meta, fmt.Sprintf("-metadata:s:a:%d", i), "language="+l)
+	}
+	out := filepath.Join(dir, "dub.mkv")
+	args = append(args, maps...)
+	args = append(args, "-c:v", "mpeg4", "-c:a", "aac")
+	args = append(args, meta...)
+	args = append(args, out)
+	if b, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, b)
+	}
+	return out
+}
+
+// Switching audio in mpv is remembered for the show, and the next episode
+// starts on that track — with no global audio list set at all.
+func TestIntegrationHandPickedAudioCarriesToNextEpisode(t *testing.T) {
+	e := itSetup(t)
+	dub := itAudioTracks(t, "eng", "fre")
+
+	e.p.play(seriesReq(dub, "ttAU", 1))
+	e.loaded(t)
+	if got := e.aid(); got != float64(1) {
+		t.Fatalf("should start on the first track, aid=%v", got)
+	}
+	time.Sleep(handPickAfter + time.Second) // past the load window
+	if p, ok := store.GetAudioPref("ttAU"); ok {
+		t.Fatalf("mpv's own selection must not be recorded, got %+v", p)
+	}
+
+	// The a key draws the menu from mpv's own track-list; no app round trip.
+	if _, err := e.p.command("script-binding", "stremio_subs/stremio-audio"); err != nil {
+		t.Fatal(err)
+	}
+	itWait(t, 5*time.Second, "mpv to show the audio menu", func() bool {
+		resp, err := e.p.command("get_property", "user-data/mpv/console/open")
+		return err == nil && resp["data"] == true
+	})
+	e.p.command("keypress", "ESC")
+
+	// The user switches to French (what the menu's submit does).
+	e.p.command("set_property", "aid", 2)
+	itWait(t, 5*time.Second, "hand pick to be saved", func() bool {
+		p, ok := store.GetAudioPref("ttAU")
+		return ok && p.Lang == "French"
+	})
+
+	e.p.play(seriesReq(dub, "ttAU", 2))
+	e.loaded(t)
+	itWait(t, 8*time.Second, "next episode to start on French", func() bool {
+		return e.aid() == float64(2)
+	})
+	// The autoloader's own switch is not taken for a hand pick that would
+	// overwrite the title or re-save; the preference stays as it was.
+	time.Sleep(handPickAfter + time.Second)
+	if p, _ := store.GetAudioPref("ttAU"); p.Lang != "French" {
+		t.Errorf("preference changed under the autoloader: %+v", p)
+	}
+
+	// The menu's last row forgets it; a file that is not an episode of a
+	// show then starts on mpv's own choice, not on track 2.
+	e.p.command("script-message", "stremio-cliuwu-audio-forget")
+	itWait(t, 5*time.Second, "preference to be forgotten", func() bool {
+		_, ok := store.GetAudioPref("ttAU")
+		return !ok
+	})
+	e.p.play(PlayRequest{VideoID: "tt1", MediaType: "movie", Label: "m", URL: dub})
+	e.loaded(t)
+	time.Sleep(time.Second)
+	if got := e.aid(); got != float64(1) {
+		t.Errorf("a hand pick leaked into the next file: aid=%v", got)
+	}
+}
+
+// An addon subtitle that is already a track can only be chosen again from the
+// track rows of the Alt+j menu (or mpv's own). That counts as a hand pick too,
+// remembered by language; the autoloader's own sub-add does not.
+func TestIntegrationRepickedAddonSubtitleIsRemembered(t *testing.T) {
+	e := itSetup(t)
+	two := itTwoTracks(t)
+	e.fakeSubAddon(t, "vie", 0)
+	store.SetSubPref("ttR", "Vietnamese", "plugin") // last time: the addon's track
+
+	e.p.play(seriesReq(two, "ttR", 1))
+	e.loaded(t)
+	itWait(t, 10*time.Second, "autoloaded plugin track", func() bool { return e.externalSubs() == 1 })
+	time.Sleep(handPickAfter + time.Second)
+	if p, _ := store.GetSubPref("ttR"); p.Src != "plugin" || p.Lang != "Vietnamese" {
+		t.Fatalf("the autoloader's own sub-add must not re-record: %+v", p)
+	}
+
+	// Switch to the in-file French track, then back to the addon's track.
+	e.p.command("set_property", "sid", 2)
+	itWait(t, 5*time.Second, "French to be saved", func() bool {
+		p, _ := store.GetSubPref("ttR")
+		return p.Lang == "French" && p.Src == "embedded"
+	})
+	var ext int
+	for _, tr := range tracks(e.rawTracks(t), "sub") {
+		if tr.external {
+			ext = tr.id
+		}
+	}
+	if ext == 0 {
+		t.Fatal("no external track")
+	}
+	e.p.command("set_property", "sid", ext)
+	itWait(t, 5*time.Second, "the addon's track to be saved again", func() bool {
+		p, _ := store.GetSubPref("ttR")
+		return p.Lang == "Vietnamese" && p.Src == "plugin"
+	})
+}
+
 // fakeSubAddon installs a subtitle addon that offers one track in lang.
 func (e *itEnv) fakeSubAddon(t *testing.T, lang string, delay time.Duration) {
 	t.Helper()
@@ -277,6 +403,17 @@ func (e *itEnv) fakeSubAddon(t *testing.T, lang string, delay time.Duration) {
 	e.addons = addons
 }
 
+// rawTracks is mpv's track-list as it reports it.
+func (e *itEnv) rawTracks(t *testing.T) []any {
+	t.Helper()
+	resp, err := e.p.command("get_property", "track-list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := resp["data"].([]any)
+	return raw
+}
+
 // externalSubs counts subtitle tracks mpv has that are not inside the file.
 func (e *itEnv) externalSubs() int {
 	resp, err := e.p.command("get_property", "track-list")
@@ -284,10 +421,8 @@ func (e *itEnv) externalSubs() int {
 		return -1
 	}
 	n := 0
-	raw, _ := resp["data"].([]any)
-	for _, it := range raw {
-		m, _ := it.(map[string]any)
-		if m["type"] == "sub" && m["external"] == true {
+	for _, tr := range tracks(resp["data"].([]any), "sub") {
+		if tr.external {
 			n++
 		}
 	}
@@ -487,6 +622,11 @@ func TestIntegrationSubtitleMenuInMpv(t *testing.T) {
 		t.Fatal(err)
 	}
 	itWait(t, 10*time.Second, "chosen subtitle to load", func() bool { return e.externalSubs() > before })
+	// ...and, like a pick from the S screen, becomes the show's preference.
+	itWait(t, 5*time.Second, "menu pick to be saved", func() bool {
+		p, ok := store.GetSubPref("ttM")
+		return ok && p.Lang == "English" && p.Src == "plugin"
+	})
 
 	// An answer for a menu that is no longer current does nothing.
 	n := e.externalSubs()
