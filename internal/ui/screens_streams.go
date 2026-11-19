@@ -659,6 +659,12 @@ func (s *streamScreen) Update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, nil
 
+	case addonsRecoveredMsg:
+		// An addon that was down when this list was fetched is back, and
+		// the caches it was missing from are already dropped.
+		s.retries = 0
+		return s, s.load()
+
 	case streamsRetryMsg:
 		if m.id != s.id || len(s.streams) > 0 || m.attempt > streamRetryMax {
 			return s, nil

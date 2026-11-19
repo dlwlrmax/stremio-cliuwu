@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"stremio-cliuwu/internal/jsonio"
 	"stremio-cliuwu/internal/paths"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -212,11 +214,19 @@ func RedactErr(err error) string {
 
 // manifestTimeout bounds a single manifest fetch. Startup waits on all of
 // them, so the slowest one sets how long the app takes to be usable.
-const manifestTimeout = 5 * time.Second
+var manifestTimeout = 5 * time.Second
 
-func FetchAddon(manifestURL string) Addon {
+// manifestRetryTimeout is the second, patient attempt at a manifest that missed
+// manifestTimeout. Nothing waits on it, so it can afford to be generous: a
+// self-hosted aggregator such as AIOStreams validates its whole config on the
+// first request after idling and routinely takes three to seven seconds.
+var manifestRetryTimeout = 20 * time.Second
+
+func FetchAddon(manifestURL string) Addon { return fetchAddon(manifestURL, manifestTimeout) }
+
+func fetchAddon(manifestURL string, timeout time.Duration) Addon {
 	a := Addon{TransportURL: manifestURL}
-	if err := GetJSONTimeout(manifestURL, &a.Manifest, manifestTimeout); err != nil {
+	if err := GetJSONTimeout(manifestURL, &a.Manifest, timeout); err != nil {
 		a.Err = err
 		return a
 	}
@@ -247,6 +257,31 @@ func LoadAddons(al AddonList) []Addon {
 	}
 	wg.Wait()
 	return out
+}
+
+// RetryFailed fetches again, with the longer manifestRetryTimeout, every addon
+// whose manifest failed, and reports whether any of them came back. The input
+// is left alone, since it's the slice other goroutines are reading; healthy
+// addons are copied across untouched.
+func RetryFailed(in []Addon) ([]Addon, bool) {
+	out := slices.Clone(in)
+	var recovered atomic.Bool
+	var wg sync.WaitGroup
+	for i, a := range in {
+		if a.Err == nil {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if b := fetchAddon(a.TransportURL, manifestRetryTimeout); b.Err == nil {
+				out[i] = b
+				recovered.Store(true)
+			}
+		}()
+	}
+	wg.Wait()
+	return out, recovered.Load()
 }
 
 // OKAddons filters out the ones that failed to load.

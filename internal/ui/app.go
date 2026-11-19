@@ -32,6 +32,10 @@ type appCtx struct {
 	loading bool // manifests still being fetched
 
 	addonsMu sync.RWMutex // guards addons, which goroutines read while reloads replace it
+
+	// gen counts replacements of addons, so a manifest retry that finishes
+	// after the list was replaced can tell it's answering an old question.
+	gen int
 }
 
 // Addons returns the loaded addons. The slice is replaced wholesale on reload,
@@ -45,7 +49,29 @@ func (c *appCtx) Addons() []stremio.Addon {
 func (c *appCtx) setAddons(a []stremio.Addon) {
 	c.addonsMu.Lock()
 	c.addons = a
+	c.gen++
 	c.addonsMu.Unlock()
+}
+
+// retryFailedCmd gives every manifest that failed a second, patient attempt.
+//
+// The first fetch gives up after a few seconds so one dead addon can't hold
+// the launch. A self-hosted AIOStreams routinely takes longer than that on its
+// first request after idling, and with no second attempt it stayed failed for
+// the whole session: its streams were missing until opening the addons screen
+// happened to fetch it again.
+func retryFailedCmd() tea.Cmd {
+	addons := ctx.Addons()
+	if !slices.ContainsFunc(addons, func(a stremio.Addon) bool { return a.Err != nil }) {
+		return nil
+	}
+	gen := ctx.gen
+	return func() tea.Msg {
+		if out, ok := stremio.RetryFailed(addons); ok {
+			return addonsRecoveredMsg{gen: gen, addons: out}
+		}
+		return nil
+	}
 }
 
 var ctx *appCtx
@@ -117,6 +143,13 @@ type themeChangedMsg struct{}
 
 // addonsReadyMsg carries the manifests once the background fetch is done.
 type addonsReadyMsg struct{ Addons []stremio.Addon }
+
+// addonsRecoveredMsg carries the addon list after manifests that had failed
+// were fetched again successfully. gen is ctx.gen when the retry started.
+type addonsRecoveredMsg struct {
+	gen    int
+	addons []stremio.Addon
+}
 
 func themeChanged() tea.Cmd { return func() tea.Msg { return themeChangedMsg{} } }
 
@@ -333,6 +366,22 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.startup = nil
 			cmd = tea.Batch(cmd, start())
 		}
+		return a, tea.Batch(cmd, retryFailedCmd())
+
+	case addonsRecoveredMsg:
+		if m.gen != ctx.gen {
+			return a, nil // the list was replaced while the retry was out
+		}
+		ctx.setAddons(m.addons)
+		// Anything fetched without the missing addon is missing its results.
+		stremio.InvalidateCaches()
+		for _, sc := range a.stack {
+			if r, ok := sc.(rebuildable); ok {
+				r.rebuild()
+			}
+		}
+		next, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = next
 		return a, cmd
 
 	case themeChangedMsg:
@@ -368,7 +417,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this a reorder wouldn't take effect until the five minute TTL ran
 		// out — which reads as the reorder having done nothing.
 		stremio.InvalidateCaches()
-		return a, nil
+		return a, retryFailedCmd()
 
 	case tea.KeyMsg:
 		if cmd, handled := a.globalKey(m); handled {
